@@ -7,8 +7,10 @@ from schemas import ReservationBase
 from db import get_db, Reservation, ParkingSlot, ParkingZone, User, Vehicle
 router = APIRouter(prefix="/api/booking", tags=["Module 3: Booking & Revenue"])
 
-@router.post("/reservations", response_model=ReservationBase, status_code=status.HTTP_201_CREATED)
-async def create_reservation(reservation: ReservationBase, session: AsyncSession = Depends(get_db)):
+from schemas import ReservationCreate, ReservationResponse
+
+@router.post("/reservations", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED)
+async def create_reservation(reservation: ReservationCreate, session: AsyncSession = Depends(get_db)):
     if reservation.start_time >= reservation.end_time:
         raise HTTPException(status_code=400, detail="Start time must be before end time")
 
@@ -35,6 +37,8 @@ async def create_reservation(reservation: ReservationBase, session: AsyncSession
         raise HTTPException(status_code=400, detail="Slot is already reserved for this timeframe")
 
     zone = await session.get(ParkingZone, slot.zone_id)
+    
+    # Strictly calculated internally
     duration_seconds = (reservation.end_time - reservation.start_time).total_seconds()
     duration_hours = duration_seconds / 3600.0
     calculated_cost = round(duration_hours * float(zone.base_rate), 2)
@@ -57,8 +61,7 @@ async def create_reservation(reservation: ReservationBase, session: AsyncSession
     
     return new_reservation
 
-
-@router.patch("/reservations/{res_id}/extend", response_model=ReservationBase)
+@router.patch("/reservations/{res_id}/extend", response_model=ReservationResponse)
 async def extend_reservation(res_id: int, new_end_time: datetime, session: AsyncSession = Depends(get_db)):
     reservation = await session.get(Reservation, res_id)
     if not reservation:
@@ -79,6 +82,7 @@ async def extend_reservation(res_id: int, new_end_time: datetime, session: Async
 
     slot = await session.get(ParkingSlot, (reservation.zone_id, reservation.slot_id))
     zone = await session.get(ParkingZone, slot.zone_id)
+    
     duration_seconds = (new_end_time - reservation.start_time).total_seconds()
     duration_hours = duration_seconds / 3600.0
     

@@ -4,6 +4,10 @@ from decimal import Decimal
 from pydantic import BaseModel, field_validator, ConfigDict
 from typing import Optional, List
 
+# ----------------------------------------
+# MODULE 1: Identity & Vehicle Registry
+# ----------------------------------------
+
 class UserBase(BaseModel):
     gmail: str
     f_name: str
@@ -37,6 +41,9 @@ class VehicleBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ----------------------------------------
+# MODULE 2: Parking Zones & Slots
+# ----------------------------------------
 
 class ParkingZoneBase(BaseModel):
     location_name: str
@@ -73,17 +80,31 @@ class SensorBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ReservationBase(BaseModel):
+# ----------------------------------------
+# MODULE 3: Booking & Reservations
+# ----------------------------------------
+
+class ReservationCreate(BaseModel):
     start_time: datetime
     end_time: datetime
     plate_no: str
     user_id: int
     zone_id: int
     slot_id: int
-    total_cost: Optional[Decimal] = None
+    
+    # total_cost is intentionally omitted here to prevent frontend injection
+    model_config = ConfigDict(from_attributes=True)
+
+class ReservationResponse(ReservationCreate):
+    res_id: int
+    total_cost: Decimal
     
     model_config = ConfigDict(from_attributes=True)
 
+
+# ----------------------------------------
+# MODULE 4: Enforcement & Violations
+# ----------------------------------------
 
 class CameraBase(BaseModel):
     intersection: str
@@ -101,6 +122,11 @@ class ViolationBase(BaseModel):
     camera_id: int
     
     model_config = ConfigDict(from_attributes=True)
+
+
+# ----------------------------------------
+# MODULE 5: Ticketing & Appeals
+# ----------------------------------------
 
 class TicketBase(BaseModel):
     fine_amt: Decimal
