@@ -3,11 +3,11 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from schemas import ReservationBase
-from db import get_db, Reservation, ParkingSlot, ParkingZone, User, Vehicle
-router = APIRouter(prefix="/api/booking", tags=["Module 3: Booking & Revenue"])
-
+# Use only the updated schemas
 from schemas import ReservationCreate, ReservationResponse
+from db import get_db, Reservation, ParkingSlot, ParkingZone, User, Vehicle
+
+router = APIRouter(prefix="/api/booking", tags=["Module 3: Booking & Revenue"])
 
 @router.post("/reservations", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED)
 async def create_reservation(reservation: ReservationCreate, session: AsyncSession = Depends(get_db)):
@@ -101,7 +101,6 @@ async def cancel_reservation(res_id: int, session: AsyncSession = Depends(get_db
         
     slot = await session.get(ParkingSlot, (reservation.zone_id, reservation.slot_id))
     
-    # Fix 5: Blind Status Reversion (Only set to FREE if it is currently marked RESERVED, preventing overwrite of OCCUPIED slots)
     if slot and slot.status == "RESERVED":
         slot.status = "FREE"
         
@@ -109,13 +108,14 @@ async def cancel_reservation(res_id: int, session: AsyncSession = Depends(get_db
     await session.commit()
     return None
 
-# Fix 6: Missing System-Wide View (View all system reservations)
-@router.get("/reservations", response_model=list[ReservationBase])
+# Updated to use ReservationResponse
+@router.get("/reservations", response_model=list[ReservationResponse])
 async def get_all_reservations(session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(Reservation))
     return result.scalars().all()
 
-@router.get("/reservations/active", response_model=list[ReservationBase])
+# Updated to use ReservationResponse
+@router.get("/reservations/active", response_model=list[ReservationResponse])
 async def get_active_reservations(session: AsyncSession = Depends(get_db)):
     current_time = datetime.now(timezone.utc)
     stmt = select(Reservation).where(
@@ -138,13 +138,15 @@ async def get_zone_revenue(zone_id: int, session: AsyncSession = Depends(get_db)
     total = result.scalar() or 0.00
     return {"zone_id": zone_id, "total_revenue": float(total)}
 
-@router.get("/users/{user_id}/reservations", response_model=list[ReservationBase])
+# Updated to use ReservationResponse
+@router.get("/users/{user_id}/reservations", response_model=list[ReservationResponse])
 async def get_user_reservations(user_id: int, session: AsyncSession = Depends(get_db)):
     stmt = select(Reservation).where(Reservation.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalars().all()
 
-@router.get("/vehicles/{plate_no}/reservations", response_model=list[ReservationBase])
+# Updated to use ReservationResponse
+@router.get("/vehicles/{plate_no}/reservations", response_model=list[ReservationResponse])
 async def get_vehicle_reservations(plate_no: str, session: AsyncSession = Depends(get_db)):
     stmt = select(Reservation).where(Reservation.plate_no == plate_no)
     result = await session.execute(stmt)
