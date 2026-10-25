@@ -28,7 +28,7 @@ class VehicleBase(BaseModel):
     model: str
     colour: str
     reg_status: Literal["VERIFIED", "UNCLAIMED", "OUT_OF_STATE"] = "UNCLAIMED"
-    user_id: int
+    user_id: Optional[int] = None
 
 class ParkingZoneBase(BaseModel):
     location_name: str

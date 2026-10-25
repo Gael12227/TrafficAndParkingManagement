@@ -110,6 +110,10 @@ async def get_all_vehicles(session: AsyncSession = Depends(get_db)):
 # 9. INSERT: Register a new vehicle
 @router.post("/vehicles", response_model=VehicleBase, status_code=status.HTTP_201_CREATED)
 async def register_vehicle(vehicle: VehicleBase, session: AsyncSession = Depends(get_db)):
+    if vehicle.user_id is not None:
+        user = await session.get(User, vehicle.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User ID {vehicle.user_id} does not exist in the registry")
     stmt = select(Vehicle).where(Vehicle.plate_no == vehicle.plate_no)
     if (await session.execute(stmt)).scalars().first():
         raise HTTPException(status_code=400, detail="Vehicle already registered")
