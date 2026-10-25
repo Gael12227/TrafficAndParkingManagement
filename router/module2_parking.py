@@ -1,105 +1,252 @@
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from schemas import ParkingZoneBase, ParkingZoneResponse, ParkingSlotBase, ParkingSlotResponse, SlotStatusUpdate
-from db import get_db, ParkingZone, ParkingSlot
 
-router = APIRouter(prefix="/api/v1/parking", tags=["Module 2: Smart Parking Infrastructure"])
+from schemas import ParkingZoneBase, ParkingSlotBase, SensorBase
+from db import get_db, ParkingZone, ParkingSlot, Sensor, Reservation
 
-@router.post("/zones", response_model=ParkingZoneResponse, status_code=status.HTTP_201_CREATED)
+router = APIRouter(prefix="/api/parking", tags=["Module 2: Parking Zones & Slots"])
+
+# ---------------------------------------------------------
+# SYSTEM-WIDE CAPACITY & RATE ROUTES (Must precede {zone_id})
+# ---------------------------------------------------------
+
+@router.get("/capacity/total")
+async def get_total_system_capacity(session: AsyncSession = Depends(get_db)):
+    stmt_total = select(func.count()).select_from(ParkingSlot)
+    total_slots = (await session.execute(stmt_total)).scalar() or 0
+    
+    stmt_free = select(func.count()).select_from(ParkingSlot).where(ParkingSlot.status == "FREE")
+    total_free = (await session.execute(stmt_free)).scalar() or 0
+    
+    return {
+        "system_total_capacity": total_slots,
+        "system_free_slots": total_free,
+        "system_occupied_or_reserved": total_slots - total_free
+    }
+
+@router.get("/zones/rates/sorted")
+async def get_zones_sorted_by_rate(session: AsyncSession = Depends(get_db)):
+    stmt = select(ParkingZone).order_by(ParkingZone.base_rate.desc())
+    zones = (await session.execute(stmt)).scalars().all()
+    
+    result = []
+    for zone in zones:
+        stmt_cap = select(func.count()).select_from(ParkingSlot).where(ParkingSlot.zone_id == zone.zone_id)
+        actual_cap = (await session.execute(stmt_cap)).scalar() or 0
+        
+        result.append({
+            "zone_id": zone.zone_id,
+            "location_name": zone.location_name,
+            "base_rate": zone.base_rate,
+            "true_capacity": actual_cap
+        })
+        
+    return result
+
+# ---------------------------------------------------------
+# PARKING ZONES CRUD
+# ---------------------------------------------------------
+
+@router.post("/zones", status_code=status.HTTP_201_CREATED)
 async def create_parking_zone(zone: ParkingZoneBase, session: AsyncSession = Depends(get_db)):
     stmt = select(ParkingZone).where(ParkingZone.location_name == zone.location_name)
-    existing_zone = (await session.execute(stmt)).scalars().first()
-    if existing_zone:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"A parking zone named '{zone.location_name}' already exists with ID {existing_zone.zone_id}"
-        )
+    if (await session.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=400, detail=f"Zone '{zone.location_name}' already exists.")
+
     new_zone = ParkingZone(
         location_name=zone.location_name,
         total_cap=zone.total_cap,
         base_rate=zone.base_rate
     )
     session.add(new_zone)
+    await session.flush() 
+    
+    for i in range(1, new_zone.total_cap + 1):
+        new_slot = ParkingSlot(
+            zone_id=new_zone.zone_id,
+            slot_id=i,
+            sensor_id=f"SNR-Z{new_zone.zone_id}-{str(i).zfill(2)}",
+            status="FREE"
+        )
+        session.add(new_slot)
+        
     await session.commit()
     await session.refresh(new_zone)
     return new_zone
 
-# 2. UPDATE: Admin manually changes slot status
-@router.patch("/slots/{slot_id}/status", response_model=ParkingSlotResponse)
-async def update_slot_status(slot_id: int, update_data: SlotStatusUpdate, session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingSlot).where(ParkingSlot.slot_id == slot_id)
-    result = await session.execute(stmt)
-    slot = result.scalars().first()
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
-    
-    slot.status = update_data.status
-    await session.commit()
-    await session.refresh(slot)
-    return slot
+@router.get("/zones")
+async def list_parking_zones(session: AsyncSession = Depends(get_db)):
+    return (await session.execute(select(ParkingZone))).scalars().all()
 
-# 3. DELETE: Remove a decommissioned parking slot
-@router.delete("/slots/{slot_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_parking_slot(slot_id: int, session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingSlot).where(ParkingSlot.slot_id == slot_id)
-    result = await session.execute(stmt)
-    slot = result.scalars().first()
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+@router.get("/zones/{zone_id}")
+async def get_zone(zone_id: int, session: AsyncSession = Depends(get_db)):
+    zone = await session.get(ParkingZone, zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return zone
+
+@router.get("/zones/{zone_id}/capacity")
+async def get_zone_capacity(zone_id: int, session: AsyncSession = Depends(get_db)):
+    zone = await session.get(ParkingZone, zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
         
-    await session.delete(slot)
+    stmt_total = select(func.count()).select_from(ParkingSlot).where(ParkingSlot.zone_id == zone_id)
+    actual_total_slots = (await session.execute(stmt_total)).scalar() or 0
+    
+    stmt_free = select(func.count()).select_from(ParkingSlot).where(
+        (ParkingSlot.zone_id == zone_id) & (ParkingSlot.status == "FREE")
+    )
+    free_slots = (await session.execute(stmt_free)).scalar() or 0
+    
+    return {
+        "zone_id": zone_id,
+        "location_name": zone.location_name,
+        "total_capacity": actual_total_slots,
+        "available_free_slots": free_slots
+    }
+
+@router.get("/zones/{zone_id}/slots")
+async def get_zone_slots(zone_id: int, status_filter: Optional[str] = None, session: AsyncSession = Depends(get_db)):
+    zone = await session.get(ParkingZone, zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Zone ID {zone_id} does not exist.")
+        
+    stmt = select(ParkingSlot).where(ParkingSlot.zone_id == zone_id)
+    if status_filter:
+        stmt = stmt.where(ParkingSlot.status == status_filter.upper())
+        
+    slots = (await session.execute(stmt)).scalars().all()
+    
+    if not slots:
+        status_msg = f" with status '{status_filter.upper()}'" if status_filter else ""
+        raise HTTPException(status_code=404, detail=f"No slots exist for Zone ID {zone_id}{status_msg}.")
+        
+    return slots
+
+@router.delete("/zones/{zone_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_zone(zone_id: int, session: AsyncSession = Depends(get_db)):
+    zone = await session.get(ParkingZone, zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    await session.delete(zone)
     await session.commit()
     return None
 
-# 4. SELECT (1): View all parking zones
-@router.get("/zones", response_model=list[ParkingZoneResponse])
-async def get_all_zones(session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingZone)
-    result = await session.execute(stmt)
-    return result.scalars().all()
+# ---------------------------------------------------------
+# PARKING SLOTS CRUD & TELEMETRY
+# ---------------------------------------------------------
 
-# 5. SELECT (2): View all slots in a specific zone
-@router.get("/zones/{zone_id}/slots", response_model=list[ParkingSlotResponse])
-async def get_zone_slots(zone_id: int, session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingSlot).where(ParkingSlot.zone_id == zone_id)
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-# 6. SELECT (3): View all 'FREE' slots globally
-@router.get("/slots/free", response_model=list[ParkingSlotResponse])
-async def get_all_free_slots(session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingSlot).where(ParkingSlot.status == 'FREE')
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-# 7. SELECT (4): Show total city parking capacity (Aggregate)
-@router.get("/capacity/total")
-async def get_total_capacity(session: AsyncSession = Depends(get_db)):
-    stmt = select(func.sum(ParkingZone.total_cap))
-    result = await session.execute(stmt)
-    total = result.scalar() or 0
-    return {"total_city_capacity": total}
-
-# 8. SELECT (5): List all zones sorted by hourly rate (ORDER BY)
-@router.get("/zones/rates/sorted", response_model=list[ParkingZoneResponse])
-async def get_zones_sorted_by_rate(session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingZone).order_by(ParkingZone.base_rate.desc())
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
+@router.post("/slots/release-expired-reservations")
+async def release_expired_reservations(session: AsyncSession = Depends(get_db)):
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    
+    stmt = select(Reservation).join(
+        ParkingSlot, 
+        (Reservation.zone_id == ParkingSlot.zone_id) & (Reservation.slot_id == ParkingSlot.slot_id)
+    ).where(
+        (ParkingSlot.status == "RESERVED") & 
+        (Reservation.start_time <= one_hour_ago)
+    )
+    
+    expired_reservations = (await session.execute(stmt)).scalars().all()
+    freed_slots = []
+    
+    for res in expired_reservations:
+        slot = await session.get(ParkingSlot, (res.zone_id, res.slot_id))
+        slot.status = "FREE"
+        freed_slots.append({"zone_id": slot.zone_id, "slot_id": slot.slot_id})
+        
+    await session.commit()
+    return {"message": f"Released {len(freed_slots)} expired reservations.", "freed_slots": freed_slots}
 
 @router.post("/slots", status_code=status.HTTP_201_CREATED)
 async def create_parking_slot(slot: ParkingSlotBase, session: AsyncSession = Depends(get_db)):
     zone = await session.get(ParkingZone, slot.zone_id)
     if not zone:
-        raise HTTPException(status_code=404, detail=f"Parking Zone {slot.zone_id} not found")
-    stmt = select(ParkingSlot).where(ParkingSlot.sensor_id == slot.sensor_id)
-    if (await session.execute(stmt)).scalars().first():
-        raise HTTPException(status_code=400, detail=f"Sensor ID '{slot.sensor_id}' is already registered")
-    new_slot = ParkingSlot(**slot.model_dump())
+        raise HTTPException(status_code=404, detail="Parking Zone not found")
+        
+    stmt_max = select(func.max(ParkingSlot.slot_id)).where(ParkingSlot.zone_id == slot.zone_id)
+    max_slot_id = (await session.execute(stmt_max)).scalar() or 0
+    next_slot_id = max_slot_id + 1
+
+    new_slot = ParkingSlot(
+        zone_id=slot.zone_id,
+        slot_id=next_slot_id,
+        sensor_id=slot.sensor_id,
+        status=slot.status
+    )
     session.add(new_slot)
-    zone.total_cap += 1
+    zone.total_cap += 1 
+    
     await session.commit()
-    await session.refresh(new_slot)
     return new_slot
+
+@router.get("/slots")
+async def get_all_slots(status_filter: Optional[str] = None, session: AsyncSession = Depends(get_db)):
+    stmt = select(ParkingSlot)
+    if status_filter:
+        stmt = stmt.where(ParkingSlot.status == status_filter.upper())
+    return (await session.execute(stmt)).scalars().all()
+
+@router.patch("/slots/{zone_id}/{slot_id}/status")
+async def update_slot_telemetry(zone_id: int, slot_id: int, status_update: dict, session: AsyncSession = Depends(get_db)):
+    new_status = status_update.get("status", "").upper()
+    allowed = ["FREE", "OCCUPIED", "UNDER MAINTENANCE", "RESERVED"]
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of {allowed}")
+        
+    slot = await session.get(ParkingSlot, (zone_id, slot_id))
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+        
+    slot.status = new_status
+    await session.commit()
+    await session.refresh(slot)
+    return slot
+
+@router.delete("/slots/{zone_id}/{slot_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_slot(zone_id: int, slot_id: int, session: AsyncSession = Depends(get_db)):
+    slot = await session.get(ParkingSlot, (zone_id, slot_id))
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+    
+    zone = await session.get(ParkingZone, zone_id)
+    if zone:
+        zone.total_cap -= 1
+        
+    await session.delete(slot)
+    await session.commit()
+    return None
+
+# ---------------------------------------------------------
+# SENSORS CRUD
+# ---------------------------------------------------------
+
+@router.post("/sensors", status_code=status.HTTP_201_CREATED)
+async def create_sensor(sensor: SensorBase, session: AsyncSession = Depends(get_db)):
+    stmt = select(Sensor).where(Sensor.sensor_id == sensor.sensor_id)
+    if (await session.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=400, detail="Sensor ID already exists")
+    
+    new_sensor = Sensor(**sensor.model_dump())
+    session.add(new_sensor)
+    await session.commit()
+    return new_sensor
+
+@router.get("/sensors")
+async def get_all_sensors(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Sensor))
+    return result.scalars().all()
+
+@router.delete("/sensors/{sensor_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sensor(sensor_id: str, session: AsyncSession = Depends(get_db)):
+    sensor = await session.get(Sensor, sensor_id)
+    if not sensor:
+        raise HTTPException(status_code=404, detail="Sensor not found")
+    await session.delete(sensor)
+    await session.commit()
+    return None

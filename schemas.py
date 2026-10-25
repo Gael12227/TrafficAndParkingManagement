@@ -1,7 +1,9 @@
-from datetime import datetime
 import re
-from pydantic import BaseModel, field_validator
-from typing import Optional, List, Literal
+from datetime import datetime
+from decimal import Decimal
+from pydantic import BaseModel, field_validator, ConfigDict
+from typing import Optional, List
+
 class UserBase(BaseModel):
     gmail: str
     f_name: str
@@ -9,88 +11,111 @@ class UserBase(BaseModel):
     l_name: str
     dl_no: str
     phones: List[str]
+
     @field_validator('phones')
     @classmethod
     def validate_phones(cls, phones: List[str]) -> List[str]:
         if not phones:
             raise ValueError("At least one phone number is required.")
-        
         for phone in phones:
             cleaned_phone = re.sub(r'\D', '', phone)
             if len(cleaned_phone) < 10:
-                raise ValueError(f"Phone number '{phone}' is invalid. It must contain at least 10 digits.")
-                
+                raise ValueError(f"Phone number '{phone}' must contain at least 10 digits.")
         return phones
+        
+    model_config = ConfigDict(from_attributes=True)
+
 
 class VehicleBase(BaseModel):
     plate_no: str
     make: str
     model: str
     colour: str
-    reg_status: Literal["VERIFIED", "UNCLAIMED", "OUT_OF_STATE"] = "UNCLAIMED"
     user_id: Optional[int] = None
+    reg_status: str = "UNCLAIMED"
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
 
 class ParkingZoneBase(BaseModel):
     location_name: str
     total_cap: int
-    base_rate: float
+    base_rate: Decimal
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class ParkingZoneResponse(ParkingZoneBase):
-    zone_id: int
 
 class ParkingSlotBase(BaseModel):
-    sensor_id: str
-    status: Literal["FREE", "OCCUPIED", "MAINTENANCE"] = "FREE"
     zone_id: int
+    slot_id: Optional[int] = None
+    sensor_id: str
+    status: str = "FREE"
+    
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, status: str) -> str:
+        allowed = ["FREE", "OCCUPIED", "UNDER MAINTENANCE", "RESERVED"]
+        if status.upper() not in allowed:
+            raise ValueError(f"Status must be one of {allowed}")
+        return status.upper()
+        
+    model_config = ConfigDict(from_attributes=True)
 
-class ParkingSlotResponse(ParkingSlotBase):
-    slot_id: int
 
-class SlotStatusUpdate(BaseModel):
-    status: Literal["FREE", "OCCUPIED", "MAINTENANCE"]
+class SensorBase(BaseModel):
+    sensor_id: str
+    manufacture: str
+    date_of_manufacture: datetime
+    model: str
+    status: str = "active"
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class ReservationRequest(BaseModel):
-    user_id: int
-    plate_no: str
-    slot_id: int
+
+class ReservationBase(BaseModel):
     start_time: datetime
     end_time: datetime
+    plate_no: str
+    user_id: int
+    zone_id: int
+    slot_id: int
+    total_cost: Optional[Decimal] = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class ReservationResponse(ReservationRequest):
-    res_id: int
-    total_cost: float
 
 class CameraBase(BaseModel):
     intersection: str
     ip_address: str
-    operational_status: Literal["ACTIVE", "INACTIVE", "MAINTENANCE"] = "ACTIVE"
+    operational_status: str = "ACTIVE"
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class CameraResponse(CameraBase):
-    camera_id: int
 
-class ViolationRequest(BaseModel):
+class ViolationBase(BaseModel):
     rules_broken: str
-    img_link: str
+    violation_time: datetime
+    img_link: Optional[str] = None
     plate_no: str
     camera_id: int
-
-class ViolationBase(ViolationRequest):
-    violation_id: int
-    violation_time: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
 
 class TicketBase(BaseModel):
-    ticket_id: int
-    fine_amt: float
+    fine_amt: Decimal
     issue_date: datetime
     due_date: datetime
-    ticket_status: Literal["UNPAID", "PAID", "APPEALED", "FLAGGED"] = "UNPAID"
+    ticket_status: str = "UNPAID"
     violation_id: int
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class AppealRequest(BaseModel):
-    ticket_id: int
+
+class AppealBase(BaseModel):
     reason_text: str
-
-class AppealBase(AppealRequest):
-    appeal_id: int
     appeal_date: datetime
-    appeal_decision: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"
+    appeal_decision: str = "PENDING"
+    ticket_id: int
+    
+    model_config = ConfigDict(from_attributes=True)

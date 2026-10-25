@@ -5,7 +5,7 @@ from typing import List, Optional
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from sqlalchemy import DateTime, ForeignKey, Integer, MetaData, Numeric, String, Identity
+from sqlalchemy import DateTime, ForeignKey, Integer, MetaData, Numeric, String, Identity, ForeignKeyConstraint
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -32,7 +32,7 @@ class User(Base):
 class UserPhone(Base):
     __tablename__ = "User_Phone"
     user_id: Mapped[int] = mapped_column(ForeignKey("System_User.user_id", ondelete="CASCADE"), primary_key=True)
-    phone_no: Mapped[str] = mapped_column(String(10), primary_key=True)
+    phone_no: Mapped[str] = mapped_column(String(15), primary_key=True)
     user: Mapped["User"] = relationship(back_populates="phones")
 
 class Vehicle(Base):
@@ -57,12 +57,23 @@ class ParkingZone(Base):
 
 class ParkingSlot(Base):
     __tablename__ = "Parking_slot"
-    slot_id: Mapped[int] = mapped_column(Integer, Identity(start=1), primary_key=True)
+    # Composite Primary Key
+    zone_id: Mapped[int] = mapped_column(ForeignKey("Parking_zone.zone_id", ondelete="CASCADE"), primary_key=True)
+    slot_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    
     sensor_id: Mapped[str] = mapped_column(String(50), unique=True)
-    status: Mapped[str] = mapped_column(String(20), default="FREE")
-    zone_id: Mapped[int] = mapped_column(ForeignKey("Parking_zone.zone_id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="FREE") # FREE, OCCUPIED, UNDER MAINTENANCE, RESERVED
+    
     zone: Mapped["ParkingZone"] = relationship(back_populates="slots")
     reservations: Mapped[List["Reservation"]] = relationship(back_populates="slot")
+
+class Sensor(Base):
+    __tablename__ = "Sensor"
+    sensor_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    manufacture: Mapped[str] = mapped_column(String(100), nullable=False)
+    date_of_manufacture: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active")
 
 class Camera(Base):
     __tablename__ = "Camera"
@@ -110,9 +121,19 @@ class Reservation(Base):
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_cost: Mapped[Decimal] = mapped_column(Numeric(7, 2))
-    slot_id: Mapped[int] = mapped_column(ForeignKey("Parking_slot.slot_id"), nullable=False)
+    
+    zone_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    slot_id: Mapped[int] = mapped_column(Integer, nullable=False)
     plate_no: Mapped[str] = mapped_column(ForeignKey("Vehicle.plate_no"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("System_User.user_id"), nullable=False)
+    
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["zone_id", "slot_id"], 
+            ["Parking_slot.zone_id", "Parking_slot.slot_id"]
+        ),
+    )
+    
     slot: Mapped["ParkingSlot"] = relationship(back_populates="reservations")
     vehicle: Mapped["Vehicle"] = relationship(back_populates="reservations")
     user: Mapped["User"] = relationship(back_populates="reservations")
