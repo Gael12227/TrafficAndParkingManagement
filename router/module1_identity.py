@@ -24,7 +24,7 @@ async def create_user(user: UserBase, session: AsyncSession = Depends(get_db)):
         gmail=user.gmail
     )
     session.add(new_user)
-    await session.flush() # Flush to assign user_id
+    await session.flush()
 
     for phone in user.phones:
         session.add(UserPhone(user_id=new_user.user_id, phone_no=phone))
