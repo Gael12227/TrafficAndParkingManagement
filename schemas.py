@@ -1,7 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel
-from typing import Optional, Literal, List
-
+import re
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Literal
 class UserBase(BaseModel):
     gmail: str
     f_name: str
@@ -9,6 +9,18 @@ class UserBase(BaseModel):
     l_name: str
     dl_no: str
     phones: List[str]
+    @field_validator('phones')
+    @classmethod
+    def validate_phones(cls, phones: List[str]) -> List[str]:
+        if not phones:
+            raise ValueError("At least one phone number is required.")
+        
+        for phone in phones:
+            cleaned_phone = re.sub(r'\D', '', phone)
+            if len(cleaned_phone) < 10:
+                raise ValueError(f"Phone number '{phone}' is invalid. It must contain at least 10 digits.")
+                
+        return phones
 
 class VehicleBase(BaseModel):
     plate_no: str

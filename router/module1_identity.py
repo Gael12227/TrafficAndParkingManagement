@@ -24,7 +24,7 @@ async def create_user(user: UserBase, session: AsyncSession = Depends(get_db)):
         gmail=user.gmail
     )
     session.add(new_user)
-    await session.flush()
+    await session.flush() 
 
     for phone in user.phones:
         session.add(UserPhone(user_id=new_user.user_id, phone_no=phone))
@@ -42,7 +42,6 @@ async def update_user_phone(user_id: int, old_phone: str, new_phone: str, sessio
     if not phone_record:
         raise HTTPException(status_code=404, detail="Phone record not found for this user")
         
-    # Delete old and insert new to handle the composite primary key update properly in SQLAlchemy
     await session.delete(phone_record)
     session.add(UserPhone(user_id=user_id, phone_no=new_phone))
     await session.commit()
@@ -70,7 +69,7 @@ async def get_user_fleet(user_id: int, session: AsyncSession = Depends(get_db)):
     result = await session.execute(stmt)
     return result.scalars().all()
 
-# 5. SELECT (2): Search for vehicles by registration status (e.g., 'UNCLAIMED')
+# 5. SELECT (2): Search for vehicles by registration status
 @router.get("/vehicles/status/{reg_status}", response_model=list[VehicleBase])
 async def get_vehicles_by_status(reg_status: str, session: AsyncSession = Depends(get_db)):
     stmt = select(Vehicle).where(Vehicle.reg_status == reg_status.upper())
@@ -107,3 +106,27 @@ async def get_all_vehicles(session: AsyncSession = Depends(get_db)):
     stmt = select(Vehicle)
     result = await session.execute(stmt)
     return result.scalars().all()
+
+# 9. INSERT: Register a new vehicle
+@router.post("/vehicles", response_model=VehicleBase, status_code=status.HTTP_201_CREATED)
+async def register_vehicle(vehicle: VehicleBase, session: AsyncSession = Depends(get_db)):
+    stmt = select(Vehicle).where(Vehicle.plate_no == vehicle.plate_no)
+    if (await session.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=400, detail="Vehicle already registered")
+        
+    new_vehicle = Vehicle(**vehicle.model_dump())
+    session.add(new_vehicle)
+    await session.commit()
+    return new_vehicle
+
+# 10. UPDATE: Change vehicle registration status
+@router.patch("/vehicles/{plate_no}/status", response_model=VehicleBase)
+async def update_vehicle_status(plate_no: str, reg_status: str, session: AsyncSession = Depends(get_db)):
+    vehicle = await session.get(Vehicle, plate_no)
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+        
+    vehicle.reg_status = reg_status.upper()
+    await session.commit()
+    await session.refresh(vehicle)
+    return vehicle
