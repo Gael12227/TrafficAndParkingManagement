@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
 from schemas import UserBase, VehicleBase
 from db import get_db, User, Vehicle, UserPhone
 
@@ -65,6 +64,9 @@ async def delete_vehicle(plate_no: str, session: AsyncSession = Depends(get_db))
 # 4. SELECT (1): View a specific user's entire fleet
 @router.get("/users/{user_id}/vehicles", response_model=list[VehicleBase])
 async def get_user_fleet(user_id: int, session: AsyncSession = Depends(get_db)):
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User ID {user_id} not found")
     stmt = select(Vehicle).where(Vehicle.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalars().all()
@@ -134,3 +136,24 @@ async def update_vehicle_status(plate_no: str, reg_status: str, session: AsyncSe
     await session.commit()
     await session.refresh(vehicle)
     return vehicle
+
+# 11. SELECT: List all users in the system
+@router.get("/users", response_model=list[UserBase])
+async def get_all_users(session: AsyncSession = Depends(get_db)):
+    stmt = select(User).options(selectinload(User.phones))
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+    response = []
+    for u in users:
+        phone_list = [p.phone_no for p in u.phones]
+        response.append(
+            UserBase(
+                gmail=u.gmail, 
+                f_name=u.f_name, 
+                m_name=u.m_name, 
+                l_name=u.l_name, 
+                dl_no=u.dl_no, 
+                phones=phone_list
+            )
+        )
+    return response
