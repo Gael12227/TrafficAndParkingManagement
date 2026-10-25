@@ -5,7 +5,7 @@ from typing import List, Optional
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from sqlalchemy import DateTime, ForeignKey, Integer, MetaData, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Identity, Integer, MetaData, Numeric, String
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -19,7 +19,7 @@ class Base(DeclarativeBase):
 
 class User(Base):
     __tablename__ = "System_User"
-    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     gmail: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     f_name: Mapped[str] = mapped_column(String(50), nullable=False)
     m_name: Mapped[Optional[str]] = mapped_column(String(50))
@@ -49,7 +49,7 @@ class Vehicle(Base):
 
 class ParkingZone(Base):
     __tablename__ = "Parking_zone"
-    zone_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    zone_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     location_name: Mapped[str] = mapped_column(String(100), nullable=False)
     total_cap: Mapped[int] = mapped_column(Integer, nullable=False)
     base_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
@@ -57,7 +57,7 @@ class ParkingZone(Base):
 
 class ParkingSlot(Base):
     __tablename__ = "Parking_slot"
-    slot_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slot_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     sensor_id: Mapped[str] = mapped_column(String(50), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="FREE")
     zone_id: Mapped[int] = mapped_column(ForeignKey("Parking_zone.zone_id", ondelete="CASCADE"), nullable=False)
@@ -66,7 +66,7 @@ class ParkingSlot(Base):
 
 class Camera(Base):
     __tablename__ = "Camera"
-    camera_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    camera_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     intersection: Mapped[str] = mapped_column(String(150), nullable=False)
     ip_address: Mapped[str] = mapped_column(String(45), unique=True)
     operational_status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
@@ -74,7 +74,7 @@ class Camera(Base):
 
 class Violation(Base):
     __tablename__ = "Violations"
-    violation_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    violation_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     rules_broken: Mapped[str] = mapped_column(String(100), nullable=False)
     violation_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     img_link: Mapped[Optional[str]] = mapped_column(String(255))
@@ -86,7 +86,7 @@ class Violation(Base):
 
 class Ticket(Base):
     __tablename__ = "Ticket"
-    ticket_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     fine_amt: Mapped[Decimal] = mapped_column(Numeric(7, 2), nullable=False)
     issue_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -97,7 +97,7 @@ class Ticket(Base):
 
 class Appeal(Base):
     __tablename__ = "Appeals"
-    appeal_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    appeal_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     reason_text: Mapped[str] = mapped_column(String(500), nullable=False)
     appeal_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     appeal_decision: Mapped[str] = mapped_column(String(20), default="PENDING")
@@ -106,7 +106,7 @@ class Appeal(Base):
 
 class Reservation(Base):
     __tablename__ = "Reservation"
-    res_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    res_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_cost: Mapped[Decimal] = mapped_column(Numeric(7, 2))
