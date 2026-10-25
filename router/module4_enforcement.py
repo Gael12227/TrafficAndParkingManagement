@@ -8,7 +8,7 @@ from schemas import CameraBase, ViolationBase
 from db import get_db, Camera, Violation, Vehicle
 
 # Removed the /v1 prefix to match your frontend integration architecture
-router = APIRouter(prefix="/api/v1/enforcement", tags=["Module 4: Enforcement & Violations"])
+router = APIRouter(prefix="/api/enforcement", tags=["Module 4: Enforcement & Violations"])
 
 # ---------------------------------------------------------
 # CAMERAS CRUD & TELEMETRY

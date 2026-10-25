@@ -8,7 +8,7 @@ from schemas import TicketBase, AppealBase
 from db import get_db, Ticket, Appeal, Violation
 
 # Removed the /v1 prefix for direct Streamlit integration
-router = APIRouter(prefix="/api/v1/ticketing", tags=["Module 5: Ticketing & Appeals"])
+router = APIRouter(prefix="/api/ticketing", tags=["Module 5: Ticketing & Appeals"])
 
 # ---------------------------------------------------------
 # E-CHALLAN (TICKETING) CRUD

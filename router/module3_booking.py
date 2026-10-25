@@ -3,11 +3,8 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Fix 1: Schema Mismatch (Importing ReservationBase from your centralized schemas.py)
 from schemas import ReservationBase
 from db import get_db, Reservation, ParkingSlot, ParkingZone, User, Vehicle
-
-# Fix 2: Stale Versioning Prefix (Removed /v1)
 router = APIRouter(prefix="/api/booking", tags=["Module 3: Booking & Revenue"])
 
 @router.post("/reservations", response_model=ReservationBase, status_code=status.HTTP_201_CREATED)
@@ -22,11 +19,9 @@ async def create_reservation(reservation: ReservationBase, session: AsyncSession
     if not user or not vehicle or not slot:
         raise HTTPException(status_code=404, detail="User, Vehicle, or Slot not found")
 
-    # Fix 3: Ownership Security Flaw (Ensure vehicle belongs to the citizen booking it)
     if vehicle.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Vehicle does not belong to the requesting user")
 
-    # Fix 4: Missing Slot Status Validation (Prevent booking broken/maintenance slots)
     if slot.status == "UNDER MAINTENANCE":
         raise HTTPException(status_code=400, detail="Slot is currently under maintenance and cannot be booked")
 
@@ -40,13 +35,14 @@ async def create_reservation(reservation: ReservationBase, session: AsyncSession
         raise HTTPException(status_code=400, detail="Slot is already reserved for this timeframe")
 
     zone = await session.get(ParkingZone, slot.zone_id)
-    duration_hr = (reservation.end_time - reservation.start_time).total_seconds() / 3600
-    cost = round(duration_hr * float(zone.base_rate), 2)
+    duration_seconds = (reservation.end_time - reservation.start_time).total_seconds()
+    duration_hours = duration_seconds / 3600.0
+    calculated_cost = round(duration_hours * float(zone.base_rate), 2)
 
     new_reservation = Reservation(
         start_time=reservation.start_time,
         end_time=reservation.end_time,
-        total_cost=cost,
+        total_cost=calculated_cost,
         zone_id=reservation.zone_id,
         slot_id=reservation.slot_id,
         plate_no=reservation.plate_no,
@@ -60,6 +56,7 @@ async def create_reservation(reservation: ReservationBase, session: AsyncSession
     await session.refresh(new_reservation)
     
     return new_reservation
+
 
 @router.patch("/reservations/{res_id}/extend", response_model=ReservationBase)
 async def extend_reservation(res_id: int, new_end_time: datetime, session: AsyncSession = Depends(get_db)):
@@ -82,9 +79,10 @@ async def extend_reservation(res_id: int, new_end_time: datetime, session: Async
 
     slot = await session.get(ParkingSlot, (reservation.zone_id, reservation.slot_id))
     zone = await session.get(ParkingZone, slot.zone_id)
+    duration_seconds = (new_end_time - reservation.start_time).total_seconds()
+    duration_hours = duration_seconds / 3600.0
     
-    duration_hr = (new_end_time - reservation.start_time).total_seconds() / 3600
-    reservation.total_cost = round(duration_hr * float(zone.base_rate), 2)
+    reservation.total_cost = round(duration_hours * float(zone.base_rate), 2)
     reservation.end_time = new_end_time
     
     await session.commit()
