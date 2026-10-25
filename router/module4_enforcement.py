@@ -1,116 +1,115 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
-from sqlalchemy import select, func, desc
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
 
-from schemas import CameraBase, CameraResponse, ViolationRequest, ViolationBase, TicketBase
-from db import get_db, Camera, Violation, Ticket, Vehicle
+# Using the correct schema names available in your schemas.py
+from schemas import CameraBase, ViolationBase
+from db import get_db, Camera, Violation, Vehicle
 
-router = APIRouter(prefix="/api/v1/enforcement", tags=["Module 4: Traffic Enforcement"])
+# Removed the /v1 prefix to match your frontend integration architecture
+router = APIRouter(prefix="/api/enforcement", tags=["Module 4: Enforcement & Violations"])
 
-# 1. INSERT: Log a new violation and automatically generate a Ticket
-@router.post("/violations", status_code=status.HTTP_201_CREATED)
-async def report_violation(violation: ViolationRequest, session: AsyncSession = Depends(get_db)):
-    vehicle = await session.get(Vehicle, violation.plate_no)
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found in registry")
+# ---------------------------------------------------------
+# CAMERAS CRUD & TELEMETRY
+# ---------------------------------------------------------
 
-    camera = await session.get(Camera, violation.camera_id)
-    if not camera:
-        raise HTTPException(status_code=404, detail="Camera ID not found")
-
-    new_violation = Violation(
-        rules_broken=violation.rules_broken,
-        violation_time=datetime.now(),
-        img_link=violation.img_link,
-        plate_no=violation.plate_no,
-        camera_id=violation.camera_id
-    )
-    session.add(new_violation)
-    await session.flush() # Flush to acquire violation_id for 1:1 ticket generation
-
-    # Automated logic to calculate fine based on the rule broken
-    fine = 50.00
-    if violation.rules_broken.lower() == "speeding":
-        fine = 100.00
-    elif violation.rules_broken.lower() == "red_light_violation":
-        fine = 150.00
-
-    new_ticket = Ticket(
-        fine_amt=fine,
-        issue_date=datetime.now(),
-        due_date=datetime.now() + timedelta(days=30),
-        ticket_status="UNPAID",
-        violation_id=new_violation.violation_id
-    )
-    session.add(new_ticket)
+@router.post("/cameras", status_code=status.HTTP_201_CREATED)
+async def create_camera(camera: CameraBase, session: AsyncSession = Depends(get_db)):
+    # Prevent database crash: IP addresses must be unique according to db.py
+    stmt = select(Camera).where(Camera.ip_address == camera.ip_address)
+    if (await session.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=400, detail="A camera with this IP address already exists")
+        
+    new_camera = Camera(**camera.model_dump())
+    session.add(new_camera)
     await session.commit()
-    
-    return {"message": "Violation logged and e-Challan generated", "violation_id": new_violation.violation_id}
+    await session.refresh(new_camera)
+    return new_camera
 
-# 2. UPDATE: Change a camera's operational status
-@router.patch("/cameras/{camera_id}/status", response_model=CameraResponse)
-async def update_camera_status(camera_id: int, new_status: str, session: AsyncSession = Depends(get_db)):
+@router.get("/cameras")
+async def get_all_cameras(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Camera))
+    return result.scalars().all()
+
+@router.patch("/cameras/{camera_id}/status")
+async def update_camera_status(camera_id: int, status_update: dict, session: AsyncSession = Depends(get_db)):
+    new_status = status_update.get("operational_status", "").upper()
+    if new_status not in ["ACTIVE", "INACTIVE", "MAINTENANCE"]:
+        raise HTTPException(status_code=400, detail="Status must be ACTIVE, INACTIVE, or MAINTENANCE")
+        
     camera = await session.get(Camera, camera_id)
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
         
-    camera.operational_status = new_status.upper()
+    camera.operational_status = new_status
     await session.commit()
     await session.refresh(camera)
     return camera
 
-# 3. DELETE: Delete a violation logged in error (Cascades to the Ticket)
+@router.delete("/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_camera(camera_id: int, session: AsyncSession = Depends(get_db)):
+    camera = await session.get(Camera, camera_id)
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    await session.delete(camera)
+    await session.commit()
+    return None
+
+# ---------------------------------------------------------
+# VIOLATIONS LOGGING & RETRIEVAL
+# ---------------------------------------------------------
+
+@router.post("/violations", status_code=status.HTTP_201_CREATED)
+async def log_violation(violation: ViolationBase, session: AsyncSession = Depends(get_db)):
+    # 1. Verify camera exists
+    camera = await session.get(Camera, violation.camera_id)
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    # 2. Prevent Foreign Key Crash: Auto-register unseen plates
+    # If a camera catches a car not in the database, attempting to log a violation 
+    # will cause a foreign key constraint failure. We must auto-register it as UNCLAIMED.
+    vehicle = await session.get(Vehicle, violation.plate_no)
+    if not vehicle:
+        new_vehicle = Vehicle(
+            plate_no=violation.plate_no,
+            make="UNKNOWN",
+            model="UNKNOWN",
+            colour="UNKNOWN",
+            reg_status="UNCLAIMED",
+            user_id=None
+        )
+        session.add(new_vehicle)
+        await session.flush() # Push to Oracle to establish the FK before logging the violation
+
+    new_violation = Violation(**violation.model_dump())
+    
+    # 3. Ensure timezone awareness
+    if new_violation.violation_time.tzinfo is None:
+        new_violation.violation_time = new_violation.violation_time.replace(tzinfo=timezone.utc)
+
+    session.add(new_violation)
+    await session.commit()
+    await session.refresh(new_violation)
+    return new_violation
+
+@router.get("/violations")
+async def get_all_violations(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Violation))
+    return result.scalars().all()
+
+@router.get("/vehicles/{plate_no}/violations")
+async def get_vehicle_violations(plate_no: str, session: AsyncSession = Depends(get_db)):
+    stmt = select(Violation).where(Violation.plate_no == plate_no)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
 @router.delete("/violations/{violation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_violation(violation_id: int, session: AsyncSession = Depends(get_db)):
     violation = await session.get(Violation, violation_id)
     if not violation:
         raise HTTPException(status_code=404, detail="Violation not found")
-        
-    # Deleting the violation automatically deletes the associated ticket due to the CASCADE constraint
     await session.delete(violation)
     await session.commit()
     return None
-
-# 4. SELECT (1): View all violations for a specific intersection (via Camera)
-@router.get("/cameras/{camera_id}/violations", response_model=list[ViolationBase])
-async def get_camera_violations(camera_id: int, session: AsyncSession = Depends(get_db)):
-    stmt = select(Violation).where(Violation.camera_id == camera_id)
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-# 5. SELECT (2): Count the total number of violations captured by a specific camera
-@router.get("/cameras/{camera_id}/violations/count")
-async def count_camera_violations(camera_id: int, session: AsyncSession = Depends(get_db)):
-    stmt = select(func.count()).where(Violation.camera_id == camera_id)
-    result = await session.execute(stmt)
-    count = result.scalar() or 0
-    return {"camera_id": camera_id, "total_violations_captured": count}
-
-# 6. SELECT (3): Find the most common traffic rule broken
-@router.get("/violations/frequent-rule")
-async def get_most_frequent_rule(session: AsyncSession = Depends(get_db)):
-    stmt = select(Violation.rules_broken, func.count(Violation.violation_id).label("total"))\
-        .group_by(Violation.rules_broken)\
-        .order_by(desc("total")).limit(1)
-    
-    result = await session.execute(stmt)
-    row = result.first()
-    
-    if not row:
-        return {"message": "No violations recorded yet"}
-    return {"most_common_rule": row[0], "occurrences": row[1]}
-
-# 7. SELECT (4): List all active cameras
-@router.get("/cameras/active", response_model=list[CameraResponse])
-async def get_active_cameras(session: AsyncSession = Depends(get_db)):
-    stmt = select(Camera).where(Camera.operational_status == 'ACTIVE')
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-# 8. SELECT (5): Retrieve a comprehensive violation history for a specific vehicle
-@router.get("/violations/vehicle/{plate_no}", response_model=list[ViolationBase])
-async def get_vehicle_violations(plate_no: str, session: AsyncSession = Depends(get_db)):
-    stmt = select(Violation).where(Violation.plate_no == plate_no)
-    result = await session.execute(stmt)
-    return result.scalars().all()
