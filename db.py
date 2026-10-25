@@ -32,7 +32,7 @@ class User(Base):
 class UserPhone(Base):
     __tablename__ = "User_Phone"
     user_id: Mapped[int] = mapped_column(ForeignKey("System_User.user_id", ondelete="CASCADE"), primary_key=True)
-    phone_no: Mapped[str] = mapped_column(String(15), primary_key=True)
+    phone_no: Mapped[str] = mapped_column(String(10), primary_key=True)
     user: Mapped["User"] = relationship(back_populates="phones")
 
 class Vehicle(Base):
@@ -50,7 +50,7 @@ class Vehicle(Base):
 class ParkingZone(Base):
     __tablename__ = "Parking_zone"
     zone_id: Mapped[int] = mapped_column(Integer, Identity(start=1), primary_key=True)
-    location_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    location_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     total_cap: Mapped[int] = mapped_column(Integer, nullable=False)
     base_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     slots: Mapped[List["ParkingSlot"]] = relationship(back_populates="zone", cascade="all, delete-orphan")

@@ -6,9 +6,15 @@ from db import get_db, ParkingZone, ParkingSlot
 
 router = APIRouter(prefix="/api/v1/parking", tags=["Module 2: Smart Parking Infrastructure"])
 
-# 1. INSERT: Add a newly built parking zone
 @router.post("/zones", response_model=ParkingZoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_parking_zone(zone: ParkingZoneBase, session: AsyncSession = Depends(get_db)):
+    stmt = select(ParkingZone).where(ParkingZone.location_name == zone.location_name)
+    existing_zone = (await session.execute(stmt)).scalars().first()
+    if existing_zone:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"A parking zone named '{zone.location_name}' already exists with ID {existing_zone.zone_id}"
+        )
     new_zone = ParkingZone(
         location_name=zone.location_name,
         total_cap=zone.total_cap,
@@ -81,3 +87,19 @@ async def get_zones_sorted_by_rate(session: AsyncSession = Depends(get_db)):
     stmt = select(ParkingZone).order_by(ParkingZone.base_rate.desc())
     result = await session.execute(stmt)
     return result.scalars().all()
+
+
+@router.post("/slots", status_code=status.HTTP_201_CREATED)
+async def create_parking_slot(slot: ParkingSlotBase, session: AsyncSession = Depends(get_db)):
+    zone = await session.get(ParkingZone, slot.zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail=f"Parking Zone {slot.zone_id} not found")
+    stmt = select(ParkingSlot).where(ParkingSlot.sensor_id == slot.sensor_id)
+    if (await session.execute(stmt)).scalars().first():
+        raise HTTPException(status_code=400, detail=f"Sensor ID '{slot.sensor_id}' is already registered")
+    new_slot = ParkingSlot(**slot.model_dump())
+    session.add(new_slot)
+    zone.total_cap += 1
+    await session.commit()
+    await session.refresh(new_slot)
+    return new_slot
