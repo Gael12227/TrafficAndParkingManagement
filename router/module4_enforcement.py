@@ -9,8 +9,15 @@ router = APIRouter(prefix="/api/enforcement", tags=["Module 4: Enforcement & Vio
 
 @router.post("/cameras", status_code=status.HTTP_201_CREATED)
 async def create_camera(camera: CameraBase, session: AsyncSession = Depends(get_db)):
-    stmt = select(Camera).where(Camera.ip_address == camera.ip_address)
-    if (await session.execute(stmt)).scalars().first():
+    stmt_duplicate = select(Camera).where(
+        (Camera.intersection == camera.intersection) &
+        (Camera.ip_address == camera.ip_address) &
+        (Camera.operational_status == camera.operational_status)
+    )
+    if (await session.execute(stmt_duplicate)).scalars().first():
+        raise HTTPException(status_code=400, detail="An exact copy of this camera record already exists")
+    stmt_ip = select(Camera).where(Camera.ip_address == camera.ip_address)
+    if (await session.execute(stmt_ip)).scalars().first():
         raise HTTPException(status_code=400, detail="A camera with this IP address already exists")
         
     new_camera = Camera(**camera.model_dump())
@@ -22,6 +29,21 @@ async def create_camera(camera: CameraBase, session: AsyncSession = Depends(get_
 @router.get("/cameras")
 async def get_all_cameras(session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(Camera))
+    return result.scalars().all()
+
+@router.get("/cameras/inactive")
+async def get_inactive_cameras(session: AsyncSession = Depends(get_db)):
+    stmt = select(Camera).where(Camera.operational_status == "INACTIVE")
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+@router.get("/locations/{intersection}/cameras/inactive")
+async def get_inactive_cameras_by_location(intersection: str, session: AsyncSession = Depends(get_db)):
+    stmt = select(Camera).where(
+        (Camera.operational_status == "INACTIVE") & 
+        (Camera.intersection == intersection)
+    )
+    result = await session.execute(stmt)
     return result.scalars().all()
 
 @router.patch("/cameras/{camera_id}/status")
@@ -50,6 +72,21 @@ async def delete_camera(camera_id: int, session: AsyncSession = Depends(get_db))
 
 @router.post("/violations", status_code=status.HTTP_201_CREATED)
 async def log_violation(violation: ViolationBase, session: AsyncSession = Depends(get_db)):
+    # Standardize timezone before checking duplicates
+    if violation.violation_time.tzinfo is None:
+        violation.violation_time = violation.violation_time.replace(tzinfo=timezone.utc)
+
+    # Exact duplicate check for the entire row
+    stmt_duplicate = select(Violation).where(
+        (Violation.rules_broken == violation.rules_broken) &
+        (Violation.violation_time == violation.violation_time) &
+        (Violation.img_link == violation.img_link) &
+        (Violation.plate_no == violation.plate_no) &
+        (Violation.camera_id == violation.camera_id)
+    )
+    if (await session.execute(stmt_duplicate)).scalars().first():
+        raise HTTPException(status_code=400, detail="An exact copy of this violation record already exists")
+
     camera = await session.get(Camera, violation.camera_id)
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -68,10 +105,8 @@ async def log_violation(violation: ViolationBase, session: AsyncSession = Depend
         await session.flush() 
 
     new_violation = Violation(**violation.model_dump())
+    new_violation.violation_time = violation.violation_time
     
-    if new_violation.violation_time.tzinfo is None:
-        new_violation.violation_time = new_violation.violation_time.replace(tzinfo=timezone.utc)
-
     session.add(new_violation)
     await session.commit()
     await session.refresh(new_violation)
@@ -81,6 +116,24 @@ async def log_violation(violation: ViolationBase, session: AsyncSession = Depend
 async def get_all_violations(session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(Violation))
     return result.scalars().all()
+
+@router.get("/locations/{intersection}/violations")
+async def get_violations_by_location(intersection: str, session: AsyncSession = Depends(get_db)):
+    stmt = select(Violation).join(Camera).where(Camera.intersection == intersection)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+@router.get("/violations/{violation_id}/camera")
+async def get_violation_camera(violation_id: int, session: AsyncSession = Depends(get_db)):
+    violation = await session.get(Violation, violation_id)
+    if not violation:
+        raise HTTPException(status_code=404, detail="Violation not found")
+        
+    camera = await session.get(Camera, violation.camera_id)
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera associated with this violation not found")
+        
+    return camera
 
 @router.get("/vehicles/{plate_no}/violations")
 async def get_vehicle_violations(plate_no: str, session: AsyncSession = Depends(get_db)):
