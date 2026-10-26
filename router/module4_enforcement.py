@@ -3,20 +3,14 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Using the correct schema names available in your schemas.py
+# Corrected imports matching schemas.py
 from schemas import CameraBase, ViolationBase
 from db import get_db, Camera, Violation, Vehicle
 
-# Removed the /v1 prefix to match your frontend integration architecture
 router = APIRouter(prefix="/api/enforcement", tags=["Module 4: Enforcement & Violations"])
-
-# ---------------------------------------------------------
-# CAMERAS CRUD & TELEMETRY
-# ---------------------------------------------------------
 
 @router.post("/cameras", status_code=status.HTTP_201_CREATED)
 async def create_camera(camera: CameraBase, session: AsyncSession = Depends(get_db)):
-    # Prevent database crash: IP addresses must be unique according to db.py
     stmt = select(Camera).where(Camera.ip_address == camera.ip_address)
     if (await session.execute(stmt)).scalars().first():
         raise HTTPException(status_code=400, detail="A camera with this IP address already exists")
@@ -56,20 +50,12 @@ async def delete_camera(camera_id: int, session: AsyncSession = Depends(get_db))
     await session.commit()
     return None
 
-# ---------------------------------------------------------
-# VIOLATIONS LOGGING & RETRIEVAL
-# ---------------------------------------------------------
-
 @router.post("/violations", status_code=status.HTTP_201_CREATED)
 async def log_violation(violation: ViolationBase, session: AsyncSession = Depends(get_db)):
-    # 1. Verify camera exists
     camera = await session.get(Camera, violation.camera_id)
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
 
-    # 2. Prevent Foreign Key Crash: Auto-register unseen plates
-    # If a camera catches a car not in the database, attempting to log a violation 
-    # will cause a foreign key constraint failure. We must auto-register it as UNCLAIMED.
     vehicle = await session.get(Vehicle, violation.plate_no)
     if not vehicle:
         new_vehicle = Vehicle(
@@ -81,11 +67,10 @@ async def log_violation(violation: ViolationBase, session: AsyncSession = Depend
             user_id=None
         )
         session.add(new_vehicle)
-        await session.flush() # Push to Oracle to establish the FK before logging the violation
+        await session.flush() 
 
     new_violation = Violation(**violation.model_dump())
     
-    # 3. Ensure timezone awareness
     if new_violation.violation_time.tzinfo is None:
         new_violation.violation_time = new_violation.violation_time.replace(tzinfo=timezone.utc)
 
