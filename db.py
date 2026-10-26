@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Numeric, ForeignKeyConstraint
+from sqlalchemy import Column, Identity, Integer, String, Float, ForeignKey, DateTime, Numeric, ForeignKeyConstraint
 load_dotenv()
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
@@ -20,7 +20,7 @@ async def get_db():
 
 class User(Base):
     __tablename__ = "users"
-    user_id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, Identity(start=1), primary_key=True)
     f_name = Column(String(50), nullable=False)
     m_name = Column(String(50), nullable=True)
     l_name = Column(String(50), nullable=False)
@@ -53,7 +53,7 @@ class Vehicle(Base):
 
 class ParkingZone(Base):
     __tablename__ = "parking_zones"
-    zone_id = Column(Integer, primary_key=True, autoincrement=True)
+    zone_id = Column(Integer, Identity(start=1),primary_key=True)
     location_name = Column(String(100), unique=True, nullable=False)
     total_cap = Column(Integer, default=0)
     base_rate = Column(Numeric(10, 2), nullable=False)
@@ -80,7 +80,7 @@ class Sensor(Base):
 
 class Reservation(Base):
     __tablename__ = "reservations"
-    res_id = Column(Integer, primary_key=True, autoincrement=True)
+    res_id = Column(Integer,  Identity(start=1), primary_key=True)
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=False)
     total_cost = Column(Numeric(10, 2), nullable=False)
@@ -100,7 +100,7 @@ class Reservation(Base):
 
 class Camera(Base):
     __tablename__ = "cameras"
-    camera_id = Column(Integer, primary_key=True, autoincrement=True)
+    camera_id = Column(Integer, Identity(start=1), primary_key=True)
     intersection = Column(String(100), nullable=False)
     ip_address = Column(String(50), unique=True, nullable=False)
     operational_status = Column(String(20), default="ACTIVE")
@@ -109,7 +109,7 @@ class Camera(Base):
 
 class Violation(Base):
     __tablename__ = "violations"
-    violation_id = Column(Integer, primary_key=True, autoincrement=True)
+    violation_id = Column(Integer, Identity(start=1), primary_key=True)
     rules_broken = Column(String(255), nullable=False)
     violation_time = Column(DateTime(timezone=True), nullable=False)
     img_link = Column(String(255), nullable=True)
@@ -122,7 +122,7 @@ class Violation(Base):
 
 class Ticket(Base):
     __tablename__ = "tickets"
-    ticket_id = Column(Integer, primary_key=True, autoincrement=True)
+    ticket_id = Column(Integer, Identity(start=1), primary_key=True)
     fine_amt = Column(Numeric(10, 2), nullable=False)
     issue_date = Column(DateTime(timezone=True), nullable=False)
     due_date = Column(DateTime(timezone=True), nullable=False)
@@ -134,7 +134,7 @@ class Ticket(Base):
 
 class Appeal(Base):
     __tablename__ = "appeals"
-    appeal_id = Column(Integer, primary_key=True, autoincrement=True)
+    appeal_id = Column(Integer, Identity(start=1), primary_key=True)
     reason_text = Column(String(500), nullable=False)
     appeal_date = Column(DateTime(timezone=True), nullable=False)
     appeal_decision = Column(String(20), default="PENDING")
