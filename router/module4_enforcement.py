@@ -2,8 +2,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-# Corrected imports matching schemas.py
 from schemas import CameraBase, ViolationBase
 from db import get_db, Camera, Violation, Vehicle
 
