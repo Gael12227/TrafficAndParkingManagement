@@ -1,7 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from db import lifespan
 from router import (
     module1_identity,
     module2_parking,
@@ -13,8 +11,7 @@ from router import (
 app = FastAPI(
     title="Smart City Traffic & Parking API",
     description="Backend API for Smart Parking and E-Challan Management System",
-    version="1.0.0",
-    lifespan=lifespan
+    version="1.0.0"
 )
 
 app.add_middleware(

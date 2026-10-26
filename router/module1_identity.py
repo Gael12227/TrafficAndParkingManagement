@@ -6,6 +6,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 from schemas import UserBase, VehicleBase
 from schemas import UserCreate, UserLogin 
+from schemas import VehicleCreate, VehicleBase
 from db import get_db, User, Vehicle, UserPhone
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -123,18 +124,43 @@ async def delete_user(user_id: int, session: AsyncSession = Depends(get_db)):
 # VEHICLE REGISTRY
 # ---------------------------------------------------------
 @router.post("/vehicles", response_model=VehicleBase, status_code=status.HTTP_201_CREATED)
-async def register_vehicle(vehicle: VehicleBase, session: AsyncSession = Depends(get_db)):
-    if vehicle.user_id is not None:
-        if not await session.get(User, vehicle.user_id):
-            raise HTTPException(status_code=404, detail=f"User ID {vehicle.user_id} does not exist")
-
+async def register_vehicle(vehicle: VehicleCreate, session: AsyncSession = Depends(get_db)):
+    # 1. Prevent duplicate registrations
     stmt = select(Vehicle).where(Vehicle.plate_no == vehicle.plate_no)
     if (await session.execute(stmt)).scalars().first():
         raise HTTPException(status_code=400, detail="Vehicle already registered")
+
+    # 2. Resolve DL Number to User ID
+    owner_id = None
+    reg_status = getattr(vehicle, "reg_status", "CLAIMED").upper()
+
+    if reg_status != "UNCLAIMED" and vehicle.dl_no:
+        user_stmt = select(User).where(User.dl_no == vehicle.dl_no)
+        user = (await session.execute(user_stmt)).scalars().first()
         
-    new_vehicle = Vehicle(**vehicle.model_dump())
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User with DL {vehicle.dl_no} not found")
+        
+        owner_id = user.user_id
+        reg_status = "CLAIMED"
+    else:
+        owner_id = None
+        reg_status = "UNCLAIMED"
+
+    # 3. Create and commit the vehicle record
+    new_vehicle = Vehicle(
+        plate_no=vehicle.plate_no,
+        make=vehicle.make,
+        model=vehicle.model,
+        colour=vehicle.colour,
+        reg_status=reg_status,
+        user_id=owner_id
+    )
+    
     session.add(new_vehicle)
     await session.commit()
+    await session.refresh(new_vehicle)
+    
     return new_vehicle
 
 @router.get("/vehicles", response_model=list[VehicleBase])

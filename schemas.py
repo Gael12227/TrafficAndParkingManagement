@@ -36,6 +36,14 @@ class UserLogin(BaseModel):
     gmail: str
     password: str
 
+class VehicleCreate(BaseModel):
+    plate_no: str
+    make: str
+    model: str
+    colour: str
+    dl_no: Optional[str] = None
+    reg_status: str = "CLAIMED"
+
 class VehicleBase(BaseModel):
     plate_no: str
     make: str
@@ -45,7 +53,6 @@ class VehicleBase(BaseModel):
     reg_status: str = "UNCLAIMED"
     
     model_config = ConfigDict(from_attributes=True)
-
 
 # ----------------------------------------
 # MODULE 2: Parking Zones & Slots
@@ -57,7 +64,6 @@ class ParkingZoneBase(BaseModel):
     base_rate: Decimal
     
     model_config = ConfigDict(from_attributes=True)
-
 
 class ParkingSlotBase(BaseModel):
     zone_id: int
@@ -75,7 +81,6 @@ class ParkingSlotBase(BaseModel):
         
     model_config = ConfigDict(from_attributes=True)
 
-
 class SensorBase(BaseModel):
     sensor_id: str
     manufacture: str
@@ -84,7 +89,6 @@ class SensorBase(BaseModel):
     status: str = "active"
     
     model_config = ConfigDict(from_attributes=True)
-
 
 # ----------------------------------------
 # MODULE 3: Booking & Reservations
@@ -100,11 +104,9 @@ class ReservationCreate(BaseModel):
 
 class ReservationResponse(ReservationCreate):
     res_id: int
-    user_id: int # Backend returns the derived user ID
     total_cost: Decimal
     
     model_config = ConfigDict(from_attributes=True)
-
 
 # ----------------------------------------
 # MODULE 4: Enforcement & Violations
@@ -117,7 +119,6 @@ class CameraBase(BaseModel):
     
     model_config = ConfigDict(from_attributes=True)
 
-
 class ViolationBase(BaseModel):
     rules_broken: str
     violation_time: datetime
@@ -126,7 +127,6 @@ class ViolationBase(BaseModel):
     camera_id: int
     
     model_config = ConfigDict(from_attributes=True)
-
 
 # ----------------------------------------
 # MODULE 5: Ticketing & Appeals
@@ -140,7 +140,6 @@ class TicketBase(BaseModel):
     violation_id: int
     
     model_config = ConfigDict(from_attributes=True)
-
 
 class AppealBase(BaseModel):
     reason_text: str

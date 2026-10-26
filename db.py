@@ -1,9 +1,15 @@
 import os
+from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Numeric, ForeignKeyConstraint
-DATABASE_URL = os.getenv("DATABASE_URL", "oracle+oracledb_async://username:password@hostname:port/?service_name=servicename")
-
+load_dotenv()
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_SERVICE = os.getenv("DB_SERVICE")
+DATABASE_URL = f"oracle+oracledb_async://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/?service_name={DB_SERVICE}"
 engine = create_async_engine(DATABASE_URL, echo=True)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
@@ -11,9 +17,10 @@ Base = declarative_base()
 async def get_db():
     async with async_session() as session:
         yield session
+
 class User(Base):
     __tablename__ = "users"
-    user_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, primary_key=True)
     f_name = Column(String(50), nullable=False)
     m_name = Column(String(50), nullable=True)
     l_name = Column(String(50), nullable=False)
@@ -23,7 +30,6 @@ class User(Base):
     
     phones = relationship("UserPhone", back_populates="user", cascade="all, delete-orphan")
     vehicles = relationship("Vehicle", back_populates="owner")
-    reservations = relationship("Reservation", back_populates="user")
 
 class UserPhone(Base):
     __tablename__ = "user_phones"
@@ -81,7 +87,6 @@ class Reservation(Base):
     zone_id = Column(Integer, nullable=False)
     slot_id = Column(Integer, nullable=False)
     plate_no = Column(String(20), ForeignKey("vehicles.plate_no"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     
     __table_args__ = (
         ForeignKeyConstraint(
@@ -91,7 +96,6 @@ class Reservation(Base):
     )
     
     slot = relationship("ParkingSlot", back_populates="reservations")
-    user = relationship("User", back_populates="reservations")
     vehicle = relationship("Vehicle", back_populates="reservations")
 
 class Camera(Base):
