@@ -2,21 +2,38 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
+from passlib.context import CryptContext
+from pydantic import BaseModel
 from schemas import UserBase, VehicleBase
+from schemas import UserCreate, UserLogin 
 from db import get_db, User, Vehicle, UserPhone
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
 
 router = APIRouter(prefix="/api/identity", tags=["Module 1: Identity & Vehicle Registry"])
 
+# ---------------------------------------------------------
+# USER AUTHENTICATION & IDENTITY
+# ---------------------------------------------------------
 @router.post("/users", response_model=UserBase, status_code=status.HTTP_201_CREATED)
-async def create_user(user: UserBase, session: AsyncSession = Depends(get_db)):
+async def create_user(user: UserCreate, session: AsyncSession = Depends(get_db)):
     stmt = select(User).where((User.gmail == user.gmail) | (User.dl_no == user.dl_no))
     if (await session.execute(stmt)).scalars().first():
         raise HTTPException(status_code=400, detail="User with this Gmail or DL Number already exists")
 
     new_user = User(
-        f_name=user.f_name, m_name=user.m_name, l_name=user.l_name, 
-        dl_no=user.dl_no, gmail=user.gmail
+        f_name=user.f_name, 
+        m_name=user.m_name, 
+        l_name=user.l_name, 
+        dl_no=user.dl_no, 
+        gmail=user.gmail,
+        hashed_password=get_password_hash(user.password)
     )
     session.add(new_user)
     await session.flush() 
@@ -25,7 +42,27 @@ async def create_user(user: UserBase, session: AsyncSession = Depends(get_db)):
         session.add(UserPhone(user_id=new_user.user_id, phone_no=phone))
         
     await session.commit()
-    return user
+    return UserBase(
+        gmail=new_user.gmail, f_name=new_user.f_name, m_name=new_user.m_name, 
+        l_name=new_user.l_name, dl_no=new_user.dl_no, phones=user.phones
+    )
+
+@router.post("/login")
+async def login(credentials: UserLogin, session: AsyncSession = Depends(get_db)):
+    stmt = select(User).options(selectinload(User.phones)).where(User.gmail == credentials.gmail)
+    user = (await session.execute(stmt)).scalars().first()
+    
+    if not user or not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+    return {
+        "message": "Login successful",
+        "user_id": user.user_id,
+        "user": UserBase(
+            gmail=user.gmail, f_name=user.f_name, m_name=user.m_name, 
+            l_name=user.l_name, dl_no=user.dl_no, phones=[p.phone_no for p in user.phones]
+        )
+    }
 
 @router.get("/users", response_model=list[UserBase])
 async def get_all_users(session: AsyncSession = Depends(get_db)):
@@ -82,6 +119,9 @@ async def delete_user(user_id: int, session: AsyncSession = Depends(get_db)):
     await session.commit()
     return None
 
+# ---------------------------------------------------------
+# VEHICLE REGISTRY
+# ---------------------------------------------------------
 @router.post("/vehicles", response_model=VehicleBase, status_code=status.HTTP_201_CREATED)
 async def register_vehicle(vehicle: VehicleBase, session: AsyncSession = Depends(get_db)):
     if vehicle.user_id is not None:

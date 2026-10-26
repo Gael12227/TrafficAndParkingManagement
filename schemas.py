@@ -29,6 +29,12 @@ class UserBase(BaseModel):
         
     model_config = ConfigDict(from_attributes=True)
 
+class UserCreate(UserBase):
+    password: str
+    
+class UserLogin(BaseModel):
+    gmail: str
+    password: str
 
 class VehicleBase(BaseModel):
     plate_no: str
@@ -88,15 +94,13 @@ class ReservationCreate(BaseModel):
     start_time: datetime
     end_time: datetime
     plate_no: str
-    user_id: int
     zone_id: int
     slot_id: int
-    
-    # total_cost is intentionally omitted here to prevent frontend injection
     model_config = ConfigDict(from_attributes=True)
 
 class ReservationResponse(ReservationCreate):
     res_id: int
+    user_id: int # Backend returns the derived user ID
     total_cost: Decimal
     
     model_config = ConfigDict(from_attributes=True)

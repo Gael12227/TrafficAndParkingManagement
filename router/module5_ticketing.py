@@ -2,17 +2,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-# Using the correct schema models from schemas.py
 from schemas import TicketBase, AppealBase
 from db import get_db, Ticket, Appeal, Violation
-
-# Removed the /v1 prefix for direct Streamlit integration
 router = APIRouter(prefix="/api/ticketing", tags=["Module 5: Ticketing & Appeals"])
-
-# ---------------------------------------------------------
-# E-CHALLAN (TICKETING) CRUD
-# ---------------------------------------------------------
 
 @router.post("/tickets", status_code=status.HTTP_201_CREATED)
 async def issue_ticket(ticket: TicketBase, session: AsyncSession = Depends(get_db)):

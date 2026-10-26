@@ -2,8 +2,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-
-# Use only the updated schemas
 from schemas import ReservationCreate, ReservationResponse
 from db import get_db, Reservation, ParkingSlot, ParkingZone, User, Vehicle
 
@@ -14,31 +12,45 @@ async def create_reservation(reservation: ReservationCreate, session: AsyncSessi
     if reservation.start_time >= reservation.end_time:
         raise HTTPException(status_code=400, detail="Start time must be before end time")
 
-    user = await session.get(User, reservation.user_id)
+    # 1. Derive User ID from the License Plate
     vehicle = await session.get(Vehicle, reservation.plate_no)
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found in registry")
+    if vehicle.user_id is None:
+        raise HTTPException(status_code=403, detail="Vehicle is unclaimed. Owner must register it first.")
+        
+    derived_user_id = vehicle.user_id
+
+    # 2. Prevent the user from booking multiple slots at the exact same time
+    stmt_user_overlap = select(Reservation).where(
+        (Reservation.user_id == derived_user_id) &
+        (Reservation.start_time < reservation.end_time) &
+        (Reservation.end_time > reservation.start_time)
+    )
+    if (await session.execute(stmt_user_overlap)).scalars().first():
+        raise HTTPException(status_code=400, detail="User already has an active reservation during this timeframe")
+
+    # 3. Verify Slot and physical availability
     slot = await session.get(ParkingSlot, (reservation.zone_id, reservation.slot_id))
-
-    if not user or not vehicle or not slot:
-        raise HTTPException(status_code=404, detail="User, Vehicle, or Slot not found")
-
-    if vehicle.user_id != user.user_id:
-        raise HTTPException(status_code=403, detail="Vehicle does not belong to the requesting user")
+    if not slot:
+        raise HTTPException(status_code=404, detail="Parking Slot not found")
 
     if slot.status == "UNDER MAINTENANCE":
         raise HTTPException(status_code=400, detail="Slot is currently under maintenance and cannot be booked")
 
-    stmt_res = select(Reservation).where(
+    # Prevent double booking the physical slot
+    stmt_slot_overlap = select(Reservation).where(
         (Reservation.zone_id == reservation.zone_id) &
         (Reservation.slot_id == reservation.slot_id) &
         (Reservation.start_time < reservation.end_time) &
         (Reservation.end_time > reservation.start_time)
     )
-    if (await session.execute(stmt_res)).scalars().first():
-        raise HTTPException(status_code=400, detail="Slot is already reserved for this timeframe")
+    if (await session.execute(stmt_slot_overlap)).scalars().first():
+        raise HTTPException(status_code=400, detail="Slot is already reserved for this timeframe by another user")
 
     zone = await session.get(ParkingZone, slot.zone_id)
     
-    # Strictly calculated internally
+    # 4. Strict internal cost calculation
     duration_seconds = (reservation.end_time - reservation.start_time).total_seconds()
     duration_hours = duration_seconds / 3600.0
     calculated_cost = round(duration_hours * float(zone.base_rate), 2)
@@ -50,7 +62,7 @@ async def create_reservation(reservation: ReservationCreate, session: AsyncSessi
         zone_id=reservation.zone_id,
         slot_id=reservation.slot_id,
         plate_no=reservation.plate_no,
-        user_id=reservation.user_id
+        user_id=derived_user_id # Bind the auto-derived user_id to the row
     )
 
     session.add(new_reservation)
