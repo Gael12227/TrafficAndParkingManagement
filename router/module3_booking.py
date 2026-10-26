@@ -9,65 +9,55 @@ router = APIRouter(prefix="/api/booking", tags=["Module 3: Booking & Revenue"])
 
 @router.post("/reservations", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED)
 async def create_reservation(reservation: ReservationCreate, session: AsyncSession = Depends(get_db)):
-    if reservation.start_time >= reservation.end_time:
-        raise HTTPException(status_code=400, detail="Start time must be before end time")
-
-    # 1. Derive User ID from the License Plate
+    # 1. Verify the vehicle exists
     vehicle = await session.get(Vehicle, reservation.plate_no)
     if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found in registry")
-    if vehicle.user_id is None:
-        raise HTTPException(status_code=403, detail="Vehicle is unclaimed. Owner must register it first.")
-        
-    derived_user_id = vehicle.user_id
+        raise HTTPException(status_code=404, detail="Vehicle not found. Please register the vehicle first.")
 
-    # 2. Prevent the user from booking multiple slots at the exact same time
-    stmt_user_overlap = select(Reservation).where(
-        (Reservation.user_id == derived_user_id) &
-        (Reservation.start_time < reservation.end_time) &
-        (Reservation.end_time > reservation.start_time)
+    # 2. Check if the vehicle already has an overlapping reservation
+    stmt_overlap = select(Reservation).where(
+        (Reservation.plate_no == reservation.plate_no) &
+        (Reservation.end_time > reservation.start_time) &
+        (Reservation.start_time < reservation.end_time)
     )
-    if (await session.execute(stmt_user_overlap)).scalars().first():
-        raise HTTPException(status_code=400, detail="User already has an active reservation during this timeframe")
+    if (await session.execute(stmt_overlap)).scalars().first():
+        raise HTTPException(status_code=400, detail="This vehicle already has an active reservation during this time.")
 
-    # 3. Verify Slot and physical availability
-    slot = await session.get(ParkingSlot, (reservation.zone_id, reservation.slot_id))
+    # 3. Verify the slot exists and belongs to the zone
+    stmt_slot = select(ParkingSlot).where(
+        (ParkingSlot.zone_id == reservation.zone_id) & 
+        (ParkingSlot.slot_id == reservation.slot_id)
+    )
+    slot = (await session.execute(stmt_slot)).scalars().first()
     if not slot:
-        raise HTTPException(status_code=404, detail="Parking Slot not found")
+        raise HTTPException(status_code=404, detail="Parking slot not found in the specified zone.")
 
-    if slot.status == "UNDER MAINTENANCE":
-        raise HTTPException(status_code=400, detail="Slot is currently under maintenance and cannot be booked")
-
-    # Prevent double booking the physical slot
-    stmt_slot_overlap = select(Reservation).where(
+    # 4. Check if the slot itself is already booked during this time
+    stmt_slot_booked = select(Reservation).where(
         (Reservation.zone_id == reservation.zone_id) &
         (Reservation.slot_id == reservation.slot_id) &
-        (Reservation.start_time < reservation.end_time) &
-        (Reservation.end_time > reservation.start_time)
+        (Reservation.end_time > reservation.start_time) &
+        (Reservation.start_time < reservation.end_time)
     )
-    if (await session.execute(stmt_slot_overlap)).scalars().first():
-        raise HTTPException(status_code=400, detail="Slot is already reserved for this timeframe by another user")
+    if (await session.execute(stmt_slot_booked)).scalars().first():
+        raise HTTPException(status_code=400, detail="This slot is already reserved for the requested time period.")
 
-    zone = await session.get(ParkingZone, slot.zone_id)
-    
-    # 4. Strict internal cost calculation
-    duration_seconds = (reservation.end_time - reservation.start_time).total_seconds()
-    duration_hours = duration_seconds / 3600.0
+    # 5. Calculate cost (Duration in hours * zone base rate)
+    zone = await session.get(ParkingZone, reservation.zone_id)
+    duration_hours = (reservation.end_time - reservation.start_time).total_seconds() / 3600
     calculated_cost = round(duration_hours * float(zone.base_rate), 2)
 
+    # 6. Create the reservation (without user_id)
     new_reservation = Reservation(
         start_time=reservation.start_time,
         end_time=reservation.end_time,
         total_cost=calculated_cost,
         zone_id=reservation.zone_id,
         slot_id=reservation.slot_id,
-        plate_no=reservation.plate_no,
-        user_id=derived_user_id # Bind the auto-derived user_id to the row
+        plate_no=reservation.plate_no
     )
-
-    session.add(new_reservation)
-    slot.status = "RESERVED"
     
+    session.add(new_reservation)
     await session.commit()
     await session.refresh(new_reservation)
     
@@ -136,12 +126,20 @@ async def get_active_reservations(session: AsyncSession = Depends(get_db)):
     result = await session.execute(stmt)
     return result.scalars().all()
 
-@router.get("/users/{user_id}/spent")
-async def get_user_total_spent(user_id: int, session: AsyncSession = Depends(get_db)):
-    stmt = select(func.sum(Reservation.total_cost)).where(Reservation.user_id == user_id)
+@router.get("/users/{gmail}/spent")
+async def get_user_total_spent(gmail: str, session: AsyncSession = Depends(get_db)):
+    user = (await session.execute(select(User).where(User.gmail == gmail))).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    stmt = (
+        select(func.sum(Reservation.total_cost))
+        .join(Vehicle, Vehicle.plate_no == Reservation.plate_no)
+        .where(Vehicle.user_id == user.user_id)
+    )
     result = await session.execute(stmt)
     total = result.scalar() or 0.00
-    return {"user_id": user_id, "total_spent": float(total)}
+    
+    return {"gmail": gmail, "total_spent": float(total)}
 
 @router.get("/zones/{zone_id}/revenue")
 async def get_zone_revenue(zone_id: int, session: AsyncSession = Depends(get_db)):
@@ -151,11 +149,20 @@ async def get_zone_revenue(zone_id: int, session: AsyncSession = Depends(get_db)
     return {"zone_id": zone_id, "total_revenue": float(total)}
 
 # Updated to use ReservationResponse
-@router.get("/users/{user_id}/reservations", response_model=list[ReservationResponse])
-async def get_user_reservations(user_id: int, session: AsyncSession = Depends(get_db)):
-    stmt = select(Reservation).where(Reservation.user_id == user_id)
-    result = await session.execute(stmt)
-    return result.scalars().all()
+@router.get("/users/{gmail}/reservations", response_model=list[ReservationResponse])
+async def get_user_reservations(gmail: str, session: AsyncSession = Depends(get_db)):
+    user = (await session.execute(select(User).where(User.gmail == gmail))).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    stmt = (
+        select(Reservation)
+        .join(Vehicle, Vehicle.plate_no == Reservation.plate_no)
+        .where(Vehicle.user_id == user.user_id)
+    )
+    reservations = (await session.execute(stmt)).scalars().all()
+    if not reservations:
+        raise HTTPException(status_code=404, detail="No reservations found for this user")
+    return reservations
 
 # Updated to use ReservationResponse
 @router.get("/vehicles/{plate_no}/reservations", response_model=list[ReservationResponse])
@@ -163,3 +170,14 @@ async def get_vehicle_reservations(plate_no: str, session: AsyncSession = Depend
     stmt = select(Reservation).where(Reservation.plate_no == plate_no)
     result = await session.execute(stmt)
     return result.scalars().all()
+
+@router.get("/reservations/plate/{plate_no}/user")
+async def get_user_from_reservation_plate(plate_no: str, session: AsyncSession = Depends(get_db)):
+    """Query user info from plate no in reservations"""
+    stmt = select(User).join(Vehicle, User.user_id == Vehicle.user_id)\
+                       .join(Reservation, Vehicle.plate_no == Reservation.plate_no)\
+                       .where(Reservation.plate_no == plate_no)
+    user = (await session.execute(stmt)).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No registered user found for this reservation's vehicle")
+    return user

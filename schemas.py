@@ -54,6 +54,9 @@ class VehicleBase(BaseModel):
     
     model_config = ConfigDict(from_attributes=True)
 
+class VehicleStatusUpdate(BaseModel):
+    reg_status: str
+
 # ----------------------------------------
 # MODULE 2: Parking Zones & Slots
 # ----------------------------------------
@@ -81,6 +84,15 @@ class ParkingSlotBase(BaseModel):
         
     model_config = ConfigDict(from_attributes=True)
 
+class SlotStatusUpdate(BaseModel):
+    status: str
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, status: str) -> str:
+        allowed = ["FREE", "OCCUPIED", "UNDER MAINTENANCE", "RESERVED"]
+        if status.upper() not in allowed:
+            raise ValueError(f"Status must be one of {allowed}")
+        return status.upper()
 class SensorBase(BaseModel):
     sensor_id: str
     manufacture: str
@@ -119,6 +131,9 @@ class CameraBase(BaseModel):
     
     model_config = ConfigDict(from_attributes=True)
 
+class CameraStatusUpdate(BaseModel):
+    operational_status: str
+
 class ViolationBase(BaseModel):
     rules_broken: str
     violation_time: datetime
@@ -140,7 +155,8 @@ class TicketBase(BaseModel):
     violation_id: int
     
     model_config = ConfigDict(from_attributes=True)
-
+class TicketStatusUpdate(BaseModel):
+    ticket_status: str
 class AppealBase(BaseModel):
     reason_text: str
     appeal_date: datetime
@@ -148,3 +164,6 @@ class AppealBase(BaseModel):
     ticket_id: int
     
     model_config = ConfigDict(from_attributes=True)
+
+class AppealDecisionUpdate(BaseModel):
+    appeal_decision: str

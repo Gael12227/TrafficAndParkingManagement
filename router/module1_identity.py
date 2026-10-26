@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from schemas import UserBase, VehicleBase
+from schemas import UserBase, VehicleBase, VehicleStatusUpdate
 from schemas import UserCreate, UserLogin 
 from schemas import VehicleCreate, VehicleBase
 from db import get_db, User, Vehicle, UserPhone
@@ -77,15 +77,21 @@ async def get_all_users(session: AsyncSession = Depends(get_db)):
         ) for u in users
     ]
 
-@router.get("/users/{user_id}/vehicles", response_model=list[VehicleBase])
-async def get_user_fleet(user_id: int, session: AsyncSession = Depends(get_db)):
-    if not await session.get(User, user_id):
-        raise HTTPException(status_code=404, detail=f"User ID {user_id} not found")
+@router.get("/users/{gmail}/vehicles", response_model=list[VehicleBase])
+async def get_user_fleet(gmail: str, session: AsyncSession = Depends(get_db)):
+    user_stmt = select(User).where(User.gmail == gmail)
+    user = (await session.execute(user_stmt)).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with Gmail {gmail} not found")
+    stmt = select(Vehicle).where(Vehicle.user_id == user.user_id)
+    vehicles = (await session.execute(stmt)).scalars().all()
+    
+    if not vehicles:
+        raise HTTPException(status_code=404, detail="No vehicles found for this user")
         
-    stmt = select(Vehicle).where(Vehicle.user_id == user_id)
-    return (await session.execute(stmt)).scalars().all()
+    return vehicles
 
-@router.get("/users/email/{gmail}", response_model=UserBase)
+'''@router.get("/users/email/{gmail}", response_model=UserBase)
 async def get_user_by_email(gmail: str, session: AsyncSession = Depends(get_db)):
     stmt = select(User).options(selectinload(User.phones)).where(User.gmail == gmail)
     user = (await session.execute(stmt)).scalars().first()
@@ -96,26 +102,36 @@ async def get_user_by_email(gmail: str, session: AsyncSession = Depends(get_db))
     return UserBase(
         gmail=user.gmail, f_name=user.f_name, m_name=user.m_name, 
         l_name=user.l_name, dl_no=user.dl_no, phones=[p.phone_no for p in user.phones]
-    )
+    )'''
+class PhoneUpdate(BaseModel):
+    new_phone: str
 
-@router.patch("/users/{user_id}/phones/{old_phone}")
-async def update_user_phone(user_id: int, old_phone: str, new_phone: str, session: AsyncSession = Depends(get_db)):
-    stmt = select(UserPhone).where((UserPhone.user_id == user_id) & (UserPhone.phone_no == old_phone))
-    phone_record = (await session.execute(stmt)).scalars().first()
-    
-    if not phone_record:
-        raise HTTPException(status_code=404, detail="Phone record not found")
-        
-    await session.delete(phone_record)
-    session.add(UserPhone(user_id=user_id, phone_no=new_phone))
-    await session.commit()
-    return {"message": "Phone updated"}
-
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int, session: AsyncSession = Depends(get_db)):
-    user = await session.get(User, user_id)
+@router.patch("/users/{gmail}/phones/{old_phone}")
+async def update_user_phone(gmail: str, old_phone: str, phone_update: PhoneUpdate, session: AsyncSession = Depends(get_db)):
+    user = (await session.execute(select(User).where(User.gmail == gmail))).scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    phone_record = await session.get(UserPhone, {"user_id": user.user_id, "phone_no": old_phone})
+    if not phone_record:
+        raise HTTPException(status_code=404, detail="Old phone number not found for this user")
+    await session.delete(phone_record)
+    new_phone_record = UserPhone(user_id=user.user_id, phone_no=phone_update.new_phone)
+    session.add(new_phone_record)
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail="Failed to update phone number. It may already exist.")
+    return {"message": f"Phone number successfully updated to {phone_update.new_phone}"}
+
+@router.delete("/users/{gmail}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(gmail: str, session: AsyncSession = Depends(get_db)):
+    stmt = select(User).where(User.gmail == gmail)
+    user = (await session.execute(stmt)).scalars().first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
     await session.delete(user)
     await session.commit()
     return None
@@ -125,29 +141,31 @@ async def delete_user(user_id: int, session: AsyncSession = Depends(get_db)):
 # ---------------------------------------------------------
 @router.post("/vehicles", response_model=VehicleBase, status_code=status.HTTP_201_CREATED)
 async def register_vehicle(vehicle: VehicleCreate, session: AsyncSession = Depends(get_db)):
-    # 1. Prevent duplicate registrations
-    stmt = select(Vehicle).where(Vehicle.plate_no == vehicle.plate_no)
-    if (await session.execute(stmt)).scalars().first():
-        raise HTTPException(status_code=400, detail="Vehicle already registered")
-
-    # 2. Resolve DL Number to User ID
+    # 1. Resolve DL Number to User ID
     owner_id = None
     reg_status = getattr(vehicle, "reg_status", "CLAIMED").upper()
 
     if reg_status != "UNCLAIMED" and vehicle.dl_no:
         user_stmt = select(User).where(User.dl_no == vehicle.dl_no)
         user = (await session.execute(user_stmt)).scalars().first()
-        
         if not user:
             raise HTTPException(status_code=404, detail=f"User with DL {vehicle.dl_no} not found")
-        
         owner_id = user.user_id
         reg_status = "CLAIMED"
     else:
-        owner_id = None
         reg_status = "UNCLAIMED"
 
-    # 3. Create and commit the vehicle record
+    # 2. Check for duplicate plate and validate ownership
+    stmt = select(Vehicle).where(Vehicle.plate_no == vehicle.plate_no)
+    existing_vehicle = (await session.execute(stmt)).scalars().first()
+    
+    if existing_vehicle:
+        if existing_vehicle.user_id != owner_id:
+            raise HTTPException(status_code=400, detail="This plate number is registered to a different driver. Please enter a correct plate number.")
+        else:
+            raise HTTPException(status_code=400, detail="You have already registered this vehicle.")
+            
+    # 3. Create vehicle
     new_vehicle = Vehicle(
         plate_no=vehicle.plate_no,
         make=vehicle.make,
@@ -156,7 +174,6 @@ async def register_vehicle(vehicle: VehicleCreate, session: AsyncSession = Depen
         reg_status=reg_status,
         user_id=owner_id
     )
-    
     session.add(new_vehicle)
     await session.commit()
     await session.refresh(new_vehicle)
@@ -173,21 +190,52 @@ async def get_vehicles_by_status(reg_status: str, session: AsyncSession = Depend
     return (await session.execute(stmt)).scalars().all()
 
 @router.patch("/vehicles/{plate_no}/status", response_model=VehicleBase)
-async def update_vehicle_status(plate_no: str, reg_status: str, session: AsyncSession = Depends(get_db)):
+async def update_vehicle_status(
+    plate_no: str, 
+    gmail: str, 
+    status_update: VehicleStatusUpdate, 
+    session: AsyncSession = Depends(get_db)
+):
+    # 1. Fetch the vehicle
     vehicle = await session.get(Vehicle, plate_no)
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
         
-    vehicle.reg_status = reg_status.upper()
+    # 2. Fetch the user attempting the update
+    stmt = select(User).where(User.gmail == gmail)
+    user = (await session.execute(stmt)).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # 3. Verify ownership
+    if vehicle.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Not authorized: You can only update the status of your own vehicles")
+        
+    # 4. Update the registration status
+    vehicle.reg_status = status_update.reg_status.upper()
     await session.commit()
     await session.refresh(vehicle)
+    
     return vehicle
 
 @router.delete("/vehicles/{plate_no}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_vehicle(plate_no: str, session: AsyncSession = Depends(get_db)):
+async def delete_vehicle(plate_no: str, gmail: str, session: AsyncSession = Depends(get_db)):
+    # 1. Fetch the vehicle
     vehicle = await session.get(Vehicle, plate_no)
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
+        
+    # 2. Fetch the user attempting the deletion
+    stmt = select(User).where(User.gmail == gmail)
+    user = (await session.execute(stmt)).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # 3. Verify ownership (allow deletion only if IDs match)
+    if vehicle.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Not authorized: You can only delete your own vehicles")
+        
+    # 4. Delete the vehicle
     await session.delete(vehicle)
     await session.commit()
     return None

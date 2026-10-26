@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from schemas import ParkingZoneBase, ParkingSlotBase, SensorBase
+from schemas import ParkingZoneBase, ParkingSlotBase, SensorBase, SlotStatusUpdate
 from db import get_db, ParkingZone, ParkingSlot, Sensor, Reservation
 
 router = APIRouter(prefix="/api/parking", tags=["Module 2: Parking Zones & Slots"])
@@ -51,35 +51,34 @@ async def get_zones_sorted_by_rate(session: AsyncSession = Depends(get_db)):
 # ---------------------------------------------------------
 
 @router.post("/zones", status_code=status.HTTP_201_CREATED)
-async def create_parking_zone(zone: ParkingZoneBase, session: AsyncSession = Depends(get_db)):
-    stmt = select(ParkingZone).where(ParkingZone.location_name == zone.location_name)
-    if (await session.execute(stmt)).scalars().first():
-        raise HTTPException(status_code=400, detail=f"Zone '{zone.location_name}' already exists.")
-
-    new_zone = ParkingZone(
-        location_name=zone.location_name,
-        total_cap=zone.total_cap,
-        base_rate=zone.base_rate
-    )
+async def create_zone(zone_in: ParkingZoneBase, session: AsyncSession = Depends(get_db)):
+    new_zone = ParkingZone(**zone_in.model_dump())
     session.add(new_zone)
     await session.flush() 
-    
+
+    current_time = datetime.now(timezone.utc)
     for i in range(1, new_zone.total_cap + 1):
+        generated_sensor_id = f"Z{new_zone.zone_id}-SLOT{i}"
+        new_sensor = Sensor(
+            sensor_id=generated_sensor_id,
+            manufacture="Auto-Generated",
+            date_of_manufacture=current_time,
+            model="Generic-V1",
+            status="active"
+        )
+        session.add(new_sensor)
         new_slot = ParkingSlot(
             zone_id=new_zone.zone_id,
             slot_id=i,
-            sensor_id=f"SNR-Z{new_zone.zone_id}-{str(i).zfill(2)}",
+            sensor_id=generated_sensor_id,
             status="FREE"
         )
         session.add(new_slot)
-        
+
     await session.commit()
     await session.refresh(new_zone)
+    
     return new_zone
-
-@router.get("/zones")
-async def list_parking_zones(session: AsyncSession = Depends(get_db)):
-    return (await session.execute(select(ParkingZone))).scalars().all()
 
 @router.get("/zones/{zone_id}")
 async def get_zone(zone_id: int, session: AsyncSession = Depends(get_db)):
@@ -192,18 +191,23 @@ async def get_all_slots(status_filter: Optional[str] = None, session: AsyncSessi
         stmt = stmt.where(ParkingSlot.status == status_filter.upper())
     return (await session.execute(stmt)).scalars().all()
 
-@router.patch("/slots/{zone_id}/{slot_id}/status")
-async def update_slot_telemetry(zone_id: int, slot_id: int, status_update: dict, session: AsyncSession = Depends(get_db)):
-    new_status = status_update.get("status", "").upper()
-    allowed = ["FREE", "OCCUPIED", "UNDER MAINTENANCE", "RESERVED"]
-    if new_status not in allowed:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of {allowed}")
-        
-    slot = await session.get(ParkingSlot, (zone_id, slot_id))
+@router.patch("/slots/{zone_id}/{slot_id}/status", response_model=ParkingSlotBase)
+async def update_slot_status(
+    zone_id: int, 
+    slot_id: int, 
+    status_update: SlotStatusUpdate, 
+    session: AsyncSession = Depends(get_db)
+):
+    stmt = select(ParkingSlot).where(
+        (ParkingSlot.zone_id == zone_id) & 
+        (ParkingSlot.slot_id == slot_id)
+    )
+    slot = (await session.execute(stmt)).scalars().first()
+    
     if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+        raise HTTPException(status_code=404, detail="Parking slot not found")
         
-    slot.status = new_status
+    slot.status = status_update.status
     await session.commit()
     await session.refresh(slot)
     return slot
