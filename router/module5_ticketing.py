@@ -70,9 +70,12 @@ async def update_ticket_status(
     await session.refresh(ticket)
     return ticket
 
-# ---------------------------------------------------------
+@router.get("/tickets")
+async def get_all_tickets(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Ticket))
+    return result.scalars().all()
+
 # APPEALS & DISPUTES
-# ---------------------------------------------------------
 
 @router.post("/appeals", status_code=status.HTTP_201_CREATED)
 async def file_appeal(appeal: AppealBase, session: AsyncSession = Depends(get_db)):
@@ -110,8 +113,6 @@ async def resolve_appeal(
         raise HTTPException(status_code=404, detail="Appeal not found")
         
     appeal.appeal_decision = decision
-    
-    # If the appeal is accepted, the associated ticket is automatically nullified
     if decision == "ACCEPTED":
         ticket = await session.get(Ticket, appeal.ticket_id)
         if ticket:
@@ -121,9 +122,7 @@ async def resolve_appeal(
     await session.refresh(appeal)
     return appeal
 
-# ---------------------------------------------------------
 # USER-SPECIFIC CROSS-TABLE QUERIES
-# ---------------------------------------------------------
 
 @router.get("/tickets/{ticket_id}/user")
 async def get_user_from_ticket(ticket_id: int, session: AsyncSession = Depends(get_db)):
