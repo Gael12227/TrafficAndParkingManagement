@@ -9,9 +9,7 @@ from db import get_db, ParkingZone, ParkingSlot, Sensor, Reservation
 
 router = APIRouter(prefix="/api/parking", tags=["Module 2: Parking Zones & Slots"])
 
-# ---------------------------------------------------------
-# SYSTEM-WIDE CAPACITY & RATE ROUTES (Must precede {zone_id})
-# ---------------------------------------------------------
+# SYSTEM-WIDE CAPACITY & RATE ROUTES
 
 @router.get("/capacity/total")
 async def get_total_system_capacity(session: AsyncSession = Depends(get_db)):
@@ -46,9 +44,7 @@ async def get_zones_sorted_by_rate(session: AsyncSession = Depends(get_db)):
         
     return result
 
-# ---------------------------------------------------------
 # PARKING ZONES CRUD
-# ---------------------------------------------------------
 
 @router.post("/zones", status_code=status.HTTP_201_CREATED)
 async def create_zone(zone_in: ParkingZoneBase, session: AsyncSession = Depends(get_db)):
@@ -108,6 +104,14 @@ async def get_zone_capacity(zone_id: int, session: AsyncSession = Depends(get_db
         "available_free_slots": free_slots
     }
 
+@router.get("/zones/search/{location}")
+async def search_zone_by_location(location: str, session: AsyncSession = Depends(get_db)):
+    stmt = select(ParkingZone).where(ParkingZone.location_name.ilike(f"%{location}%"))
+    zones = (await session.execute(stmt)).scalars().all()
+    if not zones:
+        raise HTTPException(status_code=404, detail="No zones found matching this location")
+    return zones
+
 @router.get("/zones/{zone_id}/slots")
 async def get_zone_slots(zone_id: int, status_filter: Optional[str] = None, session: AsyncSession = Depends(get_db)):
     zone = await session.get(ParkingZone, zone_id)
@@ -135,9 +139,7 @@ async def delete_zone(zone_id: int, session: AsyncSession = Depends(get_db)):
     await session.commit()
     return None
 
-# ---------------------------------------------------------
 # PARKING SLOTS CRUD & TELEMETRY
-# ---------------------------------------------------------
 
 @router.post("/slots/release-expired-reservations")
 async def release_expired_reservations(session: AsyncSession = Depends(get_db)):
@@ -226,9 +228,7 @@ async def delete_slot(zone_id: int, slot_id: int, session: AsyncSession = Depend
     await session.commit()
     return None
 
-# ---------------------------------------------------------
 # SENSORS CRUD
-# ---------------------------------------------------------
 
 @router.post("/sensors", status_code=status.HTTP_201_CREATED)
 async def create_sensor(sensor: SensorBase, session: AsyncSession = Depends(get_db)):
