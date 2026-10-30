@@ -47,7 +47,7 @@ async def create_reservation(reservation: ReservationCreate, session: AsyncSessi
     duration_hours = (reservation.end_time - reservation.start_time).total_seconds() / 3600
     calculated_cost = round(duration_hours * float(zone.base_rate), 2)
 
-    # 6. Create the reservation (without user_id)
+    # 6. Create the reservation and mark the slot as RESERVED
     new_reservation = Reservation(
         start_time=reservation.start_time,
         end_time=reservation.end_time,
@@ -56,8 +56,11 @@ async def create_reservation(reservation: ReservationCreate, session: AsyncSessi
         slot_id=reservation.slot_id,
         plate_no=reservation.plate_no
     )
-    
     session.add(new_reservation)
+
+    # 7. Update slot status → RESERVED so capacity/overview counts it correctly
+    slot.status = "RESERVED"
+
     await session.commit()
     await session.refresh(new_reservation)
     
